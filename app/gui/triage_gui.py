@@ -1,10 +1,17 @@
 # triage_gui.py
 import csv
 import math
+import os
 import sys
+
+# Add both the gui folder and app folder to path so local modules resolve correctly
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.dirname(CURRENT_DIR)
+sys.path.insert(0, CURRENT_DIR)
+sys.path.insert(0, APP_DIR)
+
 import time
 from typing import Dict, List
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from models import SoldierInfo, calculate_hr_zone, display_motion_label
+from gui.models import SoldierInfo, calculate_hr_zone, display_motion_label
 from theme import (
     ACCENT,
     ACCENT_HOVER,
@@ -41,11 +48,19 @@ from theme import (
 )
 from widgets import AddSoldierDialog, SoldierCard
 
+# Alert thresholds — adjust these to tune sensitivity
+SPO2_MONITOR_THRESHOLD = 95       # SpO2 below this → MONITOR after delay
+SPO2_CRITICAL_THRESHOLD = 90      # SpO2 below this → CRITICAL after delay
+SPO2_ALERT_DURATION_SEC = 30      # How long SpO2 must be low before flagging
+FALL_CRITICAL_DURATION_SEC = 60   # Seconds person must be still after fall → CRITICAL
+
+
 class DashboardWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Tactical Triage Monitor")
 
+        # Size the window relative to screen size with sensible min/max bounds
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen else None
 
@@ -64,12 +79,13 @@ class DashboardWindow(QMainWindow):
             self.resize(1200, 760)
             self.setMinimumSize(900, 560)
 
-        self.roster: Dict[str, SoldierInfo] = {}
-        self.device_to_soldier: Dict[str, str] = {}
-        self.soldier_state: Dict[str, dict] = {}
-        self.card_widgets: Dict[str, SoldierCard] = {}
-        self.selected_ids: List[str] = []
-        self.live_pulse_on = True
+        # Core data stores
+        self.roster: Dict[str, SoldierInfo] = {}            # soldier_id → SoldierInfo
+        self.device_to_soldier: Dict[str, str] = {}         # device_id → soldier_id
+        self.soldier_state: Dict[str, dict] = {}            # soldier_id → live state dict
+        self.card_widgets: Dict[str, SoldierCard] = {}      # soldier_id → card widget
+        self.selected_ids: List[str] = []                   # currently displayed soldier IDs
+        self.live_pulse_on = True                           # toggled each refresh for pulse animation
 
         self._build_ui()
         self._apply_styles()
@@ -83,6 +99,7 @@ class DashboardWindow(QMainWindow):
         root.setContentsMargins(14, 14, 14, 14)
         root.setSpacing(14)
 
+        # Sidebar
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(240)
@@ -124,6 +141,7 @@ class DashboardWindow(QMainWindow):
         select_label.setStyleSheet(f"color: {TEXT_SOFT}; font-weight: 800; font-size: 12px;")
         sidebar_layout.addWidget(select_label)
 
+        # Multi-select list — selecting items here triggers card rendering
         self.soldier_list = QListWidget()
         self.soldier_list.setSelectionMode(QListWidget.MultiSelection)
         self.soldier_list.itemSelectionChanged.connect(self.on_roster_select)
@@ -133,6 +151,7 @@ class DashboardWindow(QMainWindow):
         limit_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
         sidebar_layout.addWidget(limit_label)
 
+        # Main panel
         self.main_panel = QFrame()
         self.main_panel.setObjectName("mainPanel")
 
@@ -159,6 +178,7 @@ class DashboardWindow(QMainWindow):
         header.addLayout(title_col)
         header.addStretch()
 
+        # Pulsing dot in the header to indicate live data flow
         live_row = QHBoxLayout()
         live_row.setSpacing(5)
 
@@ -173,10 +193,12 @@ class DashboardWindow(QMainWindow):
 
         main_layout.addLayout(header)
 
+        # Shown only when no soldiers are selected
         self.empty_label = QLabel("Select up to eight IDs from the roster.")
         self.empty_label.setAlignment(Qt.AlignCenter)
         self.empty_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 13px;")
 
+        # Grid that holds the soldier cards — rebuilt whenever selection changes
         self.cards_container = QWidget()
         self.cards_layout = QGridLayout(self.cards_container)
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
@@ -276,16 +298,20 @@ class DashboardWindow(QMainWindow):
         """)
 
     def make_default_state(self):
+        # Used when a soldier is added before any BLE data has arrived
         return {
             "hr": 70,
             "spo2": 98,
-            "motion_state": "STATIONARY",
+            "motion_state": "IDLE_FALL",
             "fall_detected": False,
             "last_motion_time": time.time(),
             "data_link_status": "ACTIVE",
+            "spo2_low_since": None,       # Timestamp when SpO2 first dropped below monitor threshold
+            "fall_detected_since": None,  # Timestamp when a confirmed fall was first seen
         }
 
     def rebuild_device_mapping(self):
+        # Rebuild the device_id → soldier_id lookup used by handle_incoming_packet
         self.device_to_soldier.clear()
         for sid, info in self.roster.items():
             device_id = str(info.device_id).strip()
@@ -296,6 +322,7 @@ class DashboardWindow(QMainWindow):
         if selected_ids is None:
             selected_ids = []
 
+        # Block signals while rebuilding to avoid triggering on_roster_select mid-update
         self.soldier_list.blockSignals(True)
         self.soldier_list.clear()
 
@@ -306,6 +333,7 @@ class DashboardWindow(QMainWindow):
             self.soldier_list.addItem(item)
 
         if select_first and roster_ids:
+            # Auto-select up to the display limit on first load
             limit = min(MAX_DISPLAYED_SOLDIERS, len(roster_ids))
             for i in range(limit):
                 self.soldier_list.item(i).setSelected(True)
@@ -329,6 +357,7 @@ class DashboardWindow(QMainWindow):
     def open_add_soldier_dialog(self):
         dlg = AddSoldierDialog(self)
 
+        # Centre the dialog over the parent window
         screen = self.screen() or QApplication.primaryScreen()
         if screen is not None:
             avail = screen.availableGeometry()
@@ -367,6 +396,7 @@ class DashboardWindow(QMainWindow):
         self.soldier_state[sid] = self.make_default_state()
         self.rebuild_device_mapping()
 
+        # Auto-select the new soldier if there's room in the display
         if len(current_selected) < MAX_DISPLAYED_SOLDIERS:
             current_selected.append(sid)
 
@@ -386,6 +416,7 @@ class DashboardWindow(QMainWindow):
             with open(path, "r", newline="", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
+                    # Support multiple common column name variants
                     sid = (row.get("soldier_id") or row.get("id") or "").strip()
                     name = (row.get("name") or row.get("callsign") or sid).strip()
                     device_id = (
@@ -415,6 +446,7 @@ class DashboardWindow(QMainWindow):
                 raise ValueError("No valid rows found. Expected soldier_id/id and device_id columns.")
 
             self.roster = new_roster
+            # Preserve existing live state for soldiers that were already loaded
             self.soldier_state = {
                 sid: self.soldier_state.get(sid, self.make_default_state())
                 for sid in self.roster
@@ -429,6 +461,7 @@ class DashboardWindow(QMainWindow):
         items = self.soldier_list.selectedItems()
         selected_ids = [item.data(Qt.UserRole) for item in items]
 
+        # Enforce display limit — deselect the last item if over the cap
         if len(selected_ids) > MAX_DISPLAYED_SOLDIERS:
             self.soldier_list.blockSignals(True)
             items[-1].setSelected(False)
@@ -444,6 +477,7 @@ class DashboardWindow(QMainWindow):
         self.render_cards()
 
     def get_grid_columns(self, count):
+        # Column count determines card size — fewer cards = larger cards
         if count <= 1:
             return 1
         if count == 2:
@@ -453,6 +487,7 @@ class DashboardWindow(QMainWindow):
         return 4
 
     def get_scale_name(self, count):
+        # Scale name passed to each card so it can adjust font sizes accordingly
         if count == 1:
             return "group_1"
         if count == 2:
@@ -462,6 +497,7 @@ class DashboardWindow(QMainWindow):
         return "group_5_8"
 
     def clear_cards(self):
+        # Remove all card widgets from the grid before rebuilding
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             widget = item.widget()
@@ -483,6 +519,7 @@ class DashboardWindow(QMainWindow):
         rows = math.ceil(count / cols)
         scale_name = self.get_scale_name(count)
 
+        # Reset all stretch factors before applying new ones
         for i in range(6):
             self.cards_layout.setColumnStretch(i, 0)
             self.cards_layout.setRowStretch(i, 0)
@@ -505,6 +542,7 @@ class DashboardWindow(QMainWindow):
         self.refresh_ui_elements()
 
     def toggle_card_selection(self, sid):
+        # Clicking a card toggles its selection in the sidebar list
         for i in range(self.soldier_list.count()):
             item = self.soldier_list.item(i)
             if item.data(Qt.UserRole) == sid:
@@ -513,23 +551,49 @@ class DashboardWindow(QMainWindow):
         self.on_roster_select()
 
     def resizeEvent(self, event):
+        # Re-render cards on window resize so layout stays correct
         super().resizeEvent(event)
         self.render_cards()
 
     def get_status_for_state(self, state):
-        hr = state.get("hr", 0)
         spo2 = state.get("spo2", 100)
         motion = state.get("motion_state", "")
+        link = state.get("data_link_status", "ACTIVE")
+        spo2_low_since = state.get("spo2_low_since")
+        fall_detected_since = state.get("fall_detected_since")
+        now = time.time()
 
-        if motion == "NO DATA":
+        # BLE connection dropped — driven by ble_runner.py on_disconnect
+        if link == "LOST":
             return "SIGNAL LOST", "LOST"
-        if motion == "IDLE_FALL" or hr > 130 or spo2 < 92:
+
+        # How long SpO2 has been below the monitor threshold
+        spo2_low_duration = (now - spo2_low_since) if spo2_low_since else 0
+
+        # How long since a confirmed fall was first detected
+        fall_duration = (now - fall_detected_since) if fall_detected_since else 0
+
+        # CRITICAL: SpO2 critically low for extended period
+        if spo2 < SPO2_CRITICAL_THRESHOLD and spo2_low_duration >= SPO2_ALERT_DURATION_SEC:
             return "CRITICAL", "CRITICAL"
-        if hr > 100 or spo2 < 95:
+
+        # CRITICAL: person has been still on the ground for too long after a fall
+        if motion == "STATIONARY_POST_FALL" and fall_duration >= FALL_CRITICAL_DURATION_SEC:
+            return "CRITICAL", "CRITICAL"
+
+        # MONITOR: SpO2 low for extended period but not yet critical
+        if spo2 < SPO2_MONITOR_THRESHOLD and spo2_low_duration >= SPO2_ALERT_DURATION_SEC:
             return "MONITOR", "MONITOR"
+
+        # MONITOR: fall confirmed — watch until person gets up or escalates
+        if motion in ("DETECTED_FALL", "STATIONARY_POST_FALL"):
+            return "MONITOR", "MONITOR"
+
+        # All active motion states are stable — person is moving normally
         return "STABLE", "STABLE"
 
     def refresh_ui_elements(self):
+        # Toggle pulse dot color each call to create a blinking animation
         self.live_pulse_on = not self.live_pulse_on
         live_color = LIVE if self.live_pulse_on else TEXT_DIM
         self.pulse_dot.setStyleSheet(f"color: {live_color}; font-size: 14px; font-weight: 800;")
@@ -555,6 +619,7 @@ class DashboardWindow(QMainWindow):
                 link_text,
                 f"{last_move_sec}s ago",
             )
+            card.set_hero_alerts(hr_val, spo2_val)
             card.set_status(status_text, status_kind)
             card.set_selected(sid in self.selected_ids)
 
@@ -565,8 +630,25 @@ class DashboardWindow(QMainWindow):
         state = self.soldier_state[soldier_id]
         for key, value in kwargs.items():
             state[key] = value
-            if key == "motion_state" and value not in ["NO DATA", "IDLE_FALL"]:
+            # Update last_motion_time for active motion states only
+            if key == "motion_state" and value in ("WALKING", "RUNNING", "JUMPING_OR_QUICK_SIT"):
                 state["last_motion_time"] = time.time()
+
+        # Track how long SpO2 has been below the monitor threshold
+        spo2 = state.get("spo2", 100)
+        if spo2 < SPO2_MONITOR_THRESHOLD:
+            if state.get("spo2_low_since") is None:
+                state["spo2_low_since"] = time.time()
+        else:
+            state["spo2_low_since"] = None  # Reset if SpO2 recovers
+
+        # Track how long since a confirmed fall was first detected
+        motion = state.get("motion_state", "")
+        if motion in ("DETECTED_FALL", "STATIONARY_POST_FALL"):
+            if state.get("fall_detected_since") is None:
+                state["fall_detected_since"] = time.time()
+        else:
+            state["fall_detected_since"] = None  # Reset once person is moving again
 
     def handle_incoming_packet(
         self,
@@ -579,9 +661,10 @@ class DashboardWindow(QMainWindow):
         if not device_id:
             return
 
+        # Look up which soldier this device belongs to
         soldier_id = self.device_to_soldier.get(device_id)
         if soldier_id is None:
-            return
+            return  # Unknown device — not in the current roster
 
         updates = {"data_link_status": link_status}
         if hr is not None:
@@ -590,10 +673,11 @@ class DashboardWindow(QMainWindow):
             updates["spo2"] = spo2
         if motion_state is not None:
             updates["motion_state"] = motion_state
-            updates["fall_detected"] = (motion_state == "IDLE_FALL")
+            updates["fall_detected"] = (motion_state in ("DETECTED_FALL", "STATIONARY_POST_FALL"))
 
         self.update_soldier_data(soldier_id, **updates)
         self.refresh_ui_elements()
+
 
 def main():
     app = QApplication(sys.argv)
@@ -601,6 +685,7 @@ def main():
     window = DashboardWindow()
     window.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()

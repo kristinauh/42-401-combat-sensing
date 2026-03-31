@@ -3,18 +3,28 @@
 from dataclasses import dataclass
 from typing import Optional
 
+
+# Maps raw firmware motion state strings to human-readable display labels
 def display_motion_label(value):
     mapping = {
-        "STATIONARY": "No Movement",
+        # Active states
         "WALKING": "Walking",
         "RUNNING": "Running",
-        "PRONE": "On Ground",
+        "JUMPING_OR_QUICK_SIT": "Jump / Quick Sit",
+        # Fall pipeline states
+        "IDLE_FALL": "Monitoring",
+        "CHECK_FALL": "Checking...",
+        "ANALYZE_IMPACT": "Analysing...",
+        "DETECTED_FALL": "Fall Detected",
+        "STATIONARY_POST_FALL": "Down — Not Moving",
+        # Link states
         "NO DATA": "Signal Lost",
-        "IDLE_FALL": "Unresponsive",
     }
     if value is None:
         return "--"
+    # Fall back to a title-cased version of the raw string for any unmapped states
     return mapping.get(str(value), str(value).replace("_", " ").title())
+
 
 def calculate_hr_zone(age, hr):
     if age is None or hr is None:
@@ -29,10 +39,12 @@ def calculate_hr_zone(age, hr):
     if age <= 0:
         return "--"
 
+    # Standard age-predicted maximum heart rate formula
     max_hr = 220 - age
     if max_hr <= 0:
         return "--"
 
+    # Express current HR as a fraction of max and map to training zones
     pct = hr / max_hr
     if pct < 0.50:
         return "Below Zone 1"
@@ -49,8 +61,9 @@ def calculate_hr_zone(age, hr):
     else:
         return "Above Zone 5"
 
+
 @dataclass
 class SoldierInfo:
     name: str
-    age: Optional[int]
-    device_id: str
+    age: Optional[int]   # Used for HR zone calculation — None if not provided
+    device_id: str       # Must match the BLE device ID in main.py

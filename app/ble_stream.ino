@@ -12,18 +12,18 @@ MAX30105 sensor;
 LSM6DS3 myIMU(I2C_MODE, 0x6A);
 
 // PPG settings
-#define FS_HZ 100.0f          // Sampling rate (Hz)
+#define FS_HZ 100.0f          // Sampling rate (Hz) — must match sampleRate below
 #define WINDOW_SEC 5.0f       // PPG processing window length
-#define N_SAMPLES 500         // Samples per PPG window
+#define N_SAMPLES 500         // Samples per window: FS_HZ * WINDOW_SEC
 #define TRIM_SEC 0.13f        // Ignore initial unstable portion of each window
 
 // SpO2 fit: SpO2 = A - B*R
 #define SPO2_A 99.6061f
 #define SPO2_B 4.7242f
 
-// Minimum signal quality thresholds
-#define MIN_IR_DC 20000.0f
-#define MIN_IR_AC 100.0f
+// Minimum signal quality thresholds — windows below these are rejected
+#define MIN_IR_DC 20000.0f    // Weak DC means finger is not on sensor
+#define MIN_IR_AC 100.0f      // Weak AC means no detectable pulse
 
 uint32_t ir_raw_buf[N_SAMPLES];
 uint32_t red_raw_buf[N_SAMPLES];
@@ -33,36 +33,38 @@ float red0[N_SAMPLES];
 float ir_filt[N_SAMPLES];
 float red_filt[N_SAMPLES];
 float ir_norm[N_SAMPLES];
-float scratch1[N_SAMPLES];
+float scratch1[N_SAMPLES];   // Reusable scratch buffers for filtfilt passes
 float scratch2[N_SAMPLES];
 int peak_locs[N_SAMPLES];
 
 int sample_idx = 0;
 uint32_t window_counter = 0;
+uint32_t ppg_ts = 0;         // Wall-clock time captured when each window completes
 
 // IMU settings
 const float G = 9.81f;
 const float RAD_TO_DEG_CONV = 57.295779f;
 
-#define LOOP_DELAY 10         // IMU update period in ms
+#define LOOP_DELAY 10         // IMU update period in ms (100 Hz)
 
-#define BUF_SIZE 200
-#define IDLE_TRIGGER 0.8
-#define CHECK_TRIGGER 1.4
+#define BUF_SIZE 200          // Circular buffer depth — covers ~2s of IMU data at 100 Hz
+#define IDLE_TRIGGER 0.8      // A_SVM below this suggests free-fall onset
+#define CHECK_TRIGGER 1.4     // A_SVM above this during CHECK_FALL suggests impact
 
+// Std-dev thresholds used to classify post-impact motion
 #define ACCEL_DEV_THRESHOLD 0.08
 #define GYRO_DEV_THRESHOLD 17.1
-#define DEV_BUFFER_SIZE 50
+#define DEV_BUFFER_SIZE 50    // Number of samples evaluated for std-dev check
 
 #define ACCEL_DEV_WALKING 0.13
 #define ACCEL_DEV_RUNNING 0.702
 #define ASVM_RUN_WALK_THRESHOLD 2.6
-#define BUF_SMALL 50
+#define BUF_SMALL 50          // Short window used for stationary and posture checks
 
-#define TILT_TRIGGER 30
-#define STATIONARY_THRESHOLD 0.15
+#define TILT_TRIGGER 30       // Degrees of tilt change required to confirm a fall
+#define STATIONARY_THRESHOLD 0.15  // Max deviation from 1g to be considered stationary
 
-// IMU calibration offsets
+// IMU calibration offsets — measured at rest, subtracted from raw readings
 double cal_gx = 1.101100;
 double cal_gy = -2.472750;
 double cal_gz = 0.921550;
@@ -79,12 +81,12 @@ float ax_buf[BUF_SIZE];
 float ay_buf[BUF_SIZE];
 float az_buf[BUF_SIZE];
 
-float asvm_buf[BUF_SIZE];
-float gsvm_buf[BUF_SIZE];
+float asvm_buf[BUF_SIZE];    // Scalar vector magnitude history for accel
+float gsvm_buf[BUF_SIZE];    // Scalar vector magnitude history for gyro
 
 int update_pos = 0;
-int check_pos = 0;
-int max_pos = 0;
+int check_pos = 0;           // Buffer index where high-accel impact was first seen
+int max_pos = 0;             // Buffer index of peak impact acceleration
 bool avg_valid = false;
 
 float A_SVM_mean = 0.0f;
@@ -97,22 +99,22 @@ struct curr_vals_struct {
   float gx;
   float gy;
   float gz;
-  float A_SVM;
-  float G_SVM;
+  float A_SVM;               // Acceleration scalar vector magnitude
+  float G_SVM;               // Gyro scalar vector magnitude
   uint32_t curr_time;
   uint32_t delta_time;
-  float fall_impact;
-  float fall_event_val;
+  float fall_impact;         // Peak A_SVM seen during CHECK_FALL window
+  float fall_event_val;      // Diagnostic value sent with motion packet (tilt or avg_asvm)
 };
 
 curr_vals_struct cv = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 enum FALL_STATES {
-  IDLE_FALL = 0,
-  CHECK_FALL = 1,
-  ANALYZE_IMPACT = 2,
-  DETECTED_FALL = 3,
-  STATIONARY_POST_FALL = 4,
+  IDLE_FALL = 0,             // Normal monitoring — waiting for free-fall trigger
+  CHECK_FALL = 1,            // Collecting post-trigger buffer to look for impact
+  ANALYZE_IMPACT = 2,        // Classifying what the event was
+  DETECTED_FALL = 3,         // Confirmed fall — emit packet then move to post-fall
+  STATIONARY_POST_FALL = 4,  // Waiting to confirm person is still down
   WALKING = 5,
   RUNNING = 6,
   JUMPING_OR_QUICK_SIT = 7
@@ -125,7 +127,7 @@ enum IMU_COMP {
 
 uint32_t last_imu_ms = 0;
 
-// Helpers for non-blocking fall-state tracking
+// Non-blocking state tracking for CHECK_FALL — avoids stalling loop()
 int check_fall_count = 0;
 bool check_fall_large_accel = false;
 float check_fall_max_accel = 0.0f;
@@ -196,11 +198,13 @@ void filter_biquad(const float *x, float *y, int n,
   }
 }
 
-// Forward-backward bandpass to keep the same zero-phase filtering behavior
+// Forward-backward bandpass for zero-phase distortion (equivalent to filtfilt in MATLAB/scipy)
 void bandpass_filtfilt(const float *x, float *y, int n) {
+  // Forward pass
   filter_biquad(x, scratch1, n, 0.00686787f, 0.01373573f, 0.00686787f, -1.78602350f, 0.82036394f);
   filter_biquad(scratch1, scratch2, n, 1.00000000f, -2.00000000f, 1.00000000f, -1.94806585f, 0.95047992f);
 
+  // Reverse and run again to cancel phase shift
   memcpy(scratch1, scratch2, n * sizeof(float));
   reverse_in_place(scratch1, n);
 
@@ -211,6 +215,8 @@ void bandpass_filtfilt(const float *x, float *y, int n) {
   memcpy(y, scratch1, n * sizeof(float));
 }
 
+// Finds local maxima separated by at least min_peak_dist samples
+// If two peaks are too close, keeps the taller one
 int find_peaks(const float *x, int n, int min_peak_dist, int *locs) {
   int count = 0;
 
@@ -233,17 +239,16 @@ int find_peaks(const float *x, int n, int min_peak_dist, int *locs) {
 }
 
 // R packet: ts(uint32), hr(int16 x100), spo2(int16 x100)
+// Values are scaled by 100 to avoid floats over BLE; -1 signals invalid/no reading
 void send_result(float hr, float spo2) {
   if (!Bluefruit.connected()) return;
-
-  uint32_t ts = (uint32_t)(window_counter * WINDOW_SEC * 1000.0f);
 
   int16_t hr_i = isnan(hr) ? -1 : (int16_t)lroundf(hr * 100.0f);
   int16_t spo2_i = isnan(spo2) ? -1 : (int16_t)lroundf(spo2 * 100.0f);
 
   uint8_t pkt[9];
   pkt[0] = 'R';
-  memcpy(&pkt[1], &ts, 4);
+  memcpy(&pkt[1], &ppg_ts, 4);
   memcpy(&pkt[5], &hr_i, 2);
   memcpy(&pkt[7], &spo2_i, 2);
 
@@ -251,6 +256,7 @@ void send_result(float hr, float spo2) {
 }
 
 void process_window() {
+  // Mask to 18-bit ADC range
   for (int i = 0; i < N_SAMPLES; i++) {
     ir_raw_buf[i] &= 0x3FFFF;
     red_raw_buf[i] &= 0x3FFFF;
@@ -263,7 +269,7 @@ void process_window() {
   float ir_mean = ir_dc_full;
   float red_mean = mean_float(red0, N_SAMPLES);
 
-  // Remove DC before filtering
+  // Remove DC component before filtering so the bandpass sees a zero-mean signal
   for (int i = 0; i < N_SAMPLES; i++) {
     ir0[i] -= ir_mean;
     red0[i] -= red_mean;
@@ -280,6 +286,7 @@ void process_window() {
     return;
   }
 
+  // Skip the first TRIM_SEC worth of samples — filter startup transient
   int start_idx_trim = 0;
   while (start_idx_trim < N_SAMPLES && ((float)start_idx_trim / FS_HZ) < TRIM_SEC) {
     start_idx_trim++;
@@ -294,17 +301,19 @@ void process_window() {
   float ir_dc = mean_u32(&ir_raw_buf[start_idx_trim], Nt);
   float ir_ac = 0.5f * (max_float(&ir_filt[start_idx_trim], Nt) - min_float(&ir_filt[start_idx_trim], Nt));
 
-  // Reject windows with weak or bad PPG signal
+  // Reject windows with weak or absent PPG signal
   if (ir_dc < MIN_IR_DC || ir_ac < MIN_IR_AC || ir_dc_full < MIN_IR_DC) {
     send_result(NAN, NAN);
     return;
   }
 
+  // Normalise by std-dev so peak detection isn't sensitive to signal amplitude
   for (int i = 0; i < N_SAMPLES; i++) {
     ir_norm[i] = ir_filt[i] / ir_std;
   }
 
-  int min_peak_dist = (int)roundf(FS_HZ * 0.4f);
+  // Minimum 0.4s between peaks — rejects anything faster than 200 bpm
+  int min_peak_dist = (int)roundf(FS_HZ * 0.3f);
   if (min_peak_dist > Nt - 2) min_peak_dist = Nt - 2;
   if (min_peak_dist < 1) {
     send_result(NAN, NAN);
@@ -313,6 +322,7 @@ void process_window() {
 
   int n_peaks = find_peaks(&ir_norm[start_idx_trim], Nt, min_peak_dist, peak_locs);
 
+  // HR = 60 / mean inter-beat interval
   float hr_est = NAN;
   if (n_peaks >= 2) {
     float ibi_sum = 0.0f;
@@ -324,6 +334,7 @@ void process_window() {
     if (mean_ibi > 0.0f) hr_est = 60.0f / mean_ibi;
   }
 
+  // SpO2 from modified Beer-Lambert: R = (ACred/DCred) / (ACir/DCir)
   float red_dc = mean_u32(&red_raw_buf[start_idx_trim], Nt);
   float red_ac = 0.5f * (max_float(&red_filt[start_idx_trim], Nt) - min_float(&red_filt[start_idx_trim], Nt));
 
@@ -347,6 +358,7 @@ void handle_ppg() {
     sample_idx++;
 
     if (sample_idx >= N_SAMPLES) {
+      ppg_ts = millis();  // Capture wall-clock time at window completion
       process_window();
       sample_idx = 0;
       window_counter++;
@@ -355,6 +367,7 @@ void handle_ppg() {
 }
 
 // IMU processing
+
 void initialize_values() {
   fall_state = IDLE_FALL;
   cv.A_SVM = 0.0f;
@@ -373,7 +386,7 @@ void initialize_values() {
   stationary_count = 0;
 }
 
-// Read IMU, apply calibration, and optionally push into buffers
+// Read IMU, apply calibration offsets, and optionally push into circular buffers
 void update_values(bool update_buffers) {
   cv.ax = myIMU.readFloatAccelX() - cal_ax;
   cv.ay = myIMU.readFloatAccelY() - cal_ay;
@@ -414,13 +427,14 @@ void update_values(bool update_buffers) {
   }
 }
 
+// Returns std-dev of the most recent DEV_BUFFER_SIZE samples from the circular buffer
 float std_dev_check(IMU_COMP dev_type, int buffer_size) {
   float mean = 0.0f;
   int start_idx = 0;
   int end_idx = 0;
 
-  // When using the full event buffer, only evaluate the latest portion
   if (buffer_size == BUF_SIZE) {
+    // Only evaluate the tail of the full buffer — most recent activity
     start_idx = BUF_SIZE - DEV_BUFFER_SIZE;
     end_idx = BUF_SIZE;
     buffer_size = DEV_BUFFER_SIZE;
@@ -446,7 +460,8 @@ float std_dev_check(IMU_COMP dev_type, int buffer_size) {
   return sqrtf(variance);
 }
 
-// Compare initial vs later body tilt to help distinguish a fall
+// Compares body tilt before and after the event to help confirm a fall
+// A genuine fall should show a significant change in vertical orientation
 bool posture_check() {
   float tilt_init_sum = 0.0f;
   float tilt_final_sum = 0.0f;
@@ -472,6 +487,7 @@ bool posture_check() {
   return (tilt_diff >= TILT_TRIGGER);
 }
 
+// Returns true if average A_SVM is close to 1g — person is lying still
 bool check_stationary() {
   float sum = 0.0f;
   for (int i = 0; i < BUF_SMALL; i++) {
@@ -503,18 +519,19 @@ void send_motion_packet() {
   bleuart.write(pkt, sizeof(pkt));
 }
 
-// Fill the event buffer after a low-accel trigger, without blocking loop()
+// Fills the event buffer one tick at a time after a low-accel trigger
+// Spread across loop() calls to avoid blocking PPG collection
 void handle_check_fall_tick() {
   update_values(true);
 
   if (cv.A_SVM >= CHECK_TRIGGER) {
-    if (!check_fall_large_accel) check_pos = check_fall_count;
+    if (!check_fall_large_accel) check_pos = check_fall_count;  // Mark where impact started
     check_fall_large_accel = true;
   }
 
   if (cv.A_SVM >= check_fall_max_accel) {
     check_fall_max_accel = cv.A_SVM;
-    max_pos = check_fall_count;
+    max_pos = check_fall_count;  // Track index of peak impact
   }
 
   check_fall_count++;
@@ -523,9 +540,9 @@ void handle_check_fall_tick() {
     cv.fall_impact = check_fall_max_accel;
 
     if (check_fall_large_accel) {
-      fall_state = ANALYZE_IMPACT;
+      fall_state = ANALYZE_IMPACT;  // Got free-fall + impact — analyse it
     } else {
-      initialize_values();
+      initialize_values();          // No impact seen — likely a false trigger
     }
   }
 }
@@ -536,9 +553,9 @@ void handle_stationary_tick() {
 
   if (stationary_count >= BUF_SMALL) {
     if (check_stationary()) {
-      fall_state = STATIONARY_POST_FALL;
+      fall_state = STATIONARY_POST_FALL;  // Still down — maintain fall alert
     } else {
-      initialize_values();
+      initialize_values();                // Person is moving again — reset
     }
     stationary_count = 0;
     update_pos = 0;
@@ -548,11 +565,11 @@ void handle_stationary_tick() {
 void handle_imu() {
   switch (fall_state) {
     case IDLE_FALL:
-      update_values(false);
+      update_values(false);  // No buffering needed — just watching for trigger
       cv.fall_event_val = 0.0f;
       cv.fall_impact = 0.0f;
 
-      // Low acceleration can indicate start of a possible fall sequence
+      // Low acceleration suggests onset of free-fall
       if (cv.A_SVM <= IDLE_TRIGGER) {
         update_pos = 0;
         check_pos = 0;
@@ -573,6 +590,7 @@ void handle_imu() {
       float std_gyro = std_dev_check(GYRO, BUF_SIZE);
       bool fall_tilt_check = posture_check();
 
+      // Classify the event based on post-impact motion signature
       bool stabilized_dev = (std_accel <= ACCEL_DEV_THRESHOLD) &&
                             (std_gyro <= GYRO_DEV_THRESHOLD);
       bool walking_dev = (std_accel >= ACCEL_DEV_WALKING) &&
@@ -589,13 +607,13 @@ void handle_imu() {
       } else if (stabilized_dev && !fall_tilt_check) {
         fall_state = JUMPING_OR_QUICK_SIT;
       } else {
-        initialize_values();
+        initialize_values();  // Unclassifiable — reset and wait
       }
       break;
     }
 
     case DETECTED_FALL:
-      cv.fall_event_val = 1.0f;
+      cv.fall_event_val = 1.0f;   // Flag value to distinguish fall packet from post-fall
       send_motion_packet();
       cv.fall_event_val = 0.0f;
       update_pos = 0;
@@ -606,7 +624,7 @@ void handle_imu() {
     case STATIONARY_POST_FALL:
       handle_stationary_tick();
       if (fall_state == STATIONARY_POST_FALL && stationary_count == 0) {
-        send_motion_packet();
+        send_motion_packet();  // Periodic update while person remains down
       }
       break;
 
@@ -627,23 +645,23 @@ void setup() {
   bleuart.begin();
   Bluefruit.Advertising.addService(bleuart);
   Bluefruit.Advertising.addName();
-  Bluefruit.Advertising.start(0);
+  Bluefruit.Advertising.start(0);  // 0 = advertise indefinitely
 
   if (!sensor.begin(Wire, 400000)) {
-    while (1) {}
+    while (1) {}  // Halt if sensor not found
   }
 
   sensor.setup(
-    60,
-    4,
-    2,
-    100,
-    411,
-    4096
+    60,    // LED brightness (0–255)
+    1,     // sampleAverage — 1 means no averaging, true 100 Hz into FIFO
+    2,     // ledMode — 2 = red + IR (required for SpO2)
+    100,   // sampleRate (Hz) — must match FS_HZ
+    411,   // pulseWidth (µs) — longer = more ADC bits, higher SNR
+    4096   // adcRange — maximum range for high-perfusion signals
   );
 
   if (myIMU.begin() != 0) {
-    while (1) {}
+    while (1) {}  // Halt if IMU not found
   }
 
   initialize_values();
@@ -654,6 +672,7 @@ void setup() {
 void loop() {
   handle_ppg();
 
+  // Run IMU at fixed LOOP_DELAY interval without blocking PPG collection
   uint32_t now = millis();
   if ((uint32_t)(now - last_imu_ms) >= LOOP_DELAY) {
     last_imu_ms += LOOP_DELAY;

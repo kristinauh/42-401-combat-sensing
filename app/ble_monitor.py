@@ -8,12 +8,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from utils.ble_runner import run_ble
 
-TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  # BLE UART RX characteristic
 DEVICE_NAME = "XIAO-SENSE"
 
 class PacketParser:
     def __init__(self):
-        self.buf = bytearray()
+        self.buf = bytearray()  # Persistent buffer — BLE may split packets across notifications
 
     def feed(self, data: bytes):
         self.buf.extend(data)
@@ -27,7 +27,7 @@ class PacketParser:
             if ptype == "R":
                 pkt_len = 9
                 if len(self.buf) < pkt_len:
-                    break
+                    break  # Wait for the rest of the packet to arrive
 
                 pkt = bytes(self.buf[:pkt_len])
                 del self.buf[:pkt_len]
@@ -36,6 +36,7 @@ class PacketParser:
                 hr_i = struct.unpack_from("<h", pkt, 5)[0]
                 spo2_i = struct.unpack_from("<h", pkt, 7)[0]
 
+                # Negative values signal invalid/no reading from the firmware
                 hr = None if hr_i < 0 else hr_i / 100.0
                 spo2 = None if spo2_i < 0 else spo2_i / 100.0
 
@@ -45,7 +46,7 @@ class PacketParser:
             elif ptype == "M":
                 pkt_len = 10
                 if len(self.buf) < pkt_len:
-                    break
+                    break  # Wait for the rest of the packet to arrive
 
                 pkt = bytes(self.buf[:pkt_len])
                 del self.buf[:pkt_len]
@@ -68,10 +69,10 @@ class PacketParser:
 
         return decoded_packets
 
-
 parser = PacketParser()
-t0 = None
+t0 = None  # Timestamp of the first received packet — used to compute relative times
 
+# Maps firmware fall state integers to human-readable names
 STATE_NAMES = {
     0: "IDLE_FALL",
     1: "CHECK_FALL",
@@ -83,6 +84,12 @@ STATE_NAMES = {
     7: "JUMPING_OR_QUICK_SIT",
 }
 
+def reset_state():
+    # Called on reconnect — clears stale buffer and resets relative timestamp
+    global t0, parser
+    print("[BLE] Resetting parser state on reconnect.")
+    t0 = None
+    parser = PacketParser()
 
 def handle_notification(sender: int, data: bytearray):
     global t0
@@ -93,6 +100,7 @@ def handle_notification(sender: int, data: bytearray):
         if ptype == "R":
             _, ts, hr, spo2 = decoded
 
+            # Anchor relative time to the first packet received
             if t0 is None:
                 t0 = ts
 
@@ -101,7 +109,7 @@ def handle_notification(sender: int, data: bytearray):
             hr_str = "---" if hr is None else f"{hr:.2f}"
             spo2_str = "---" if spo2 is None else f"{spo2:.2f}"
 
-            print(f"[BLE RX][PPG] t={ts_rel:.2f}s hr={hr_str} bpm spo2={spo2_str} %")
+            print(f"[BLE RX][PPG] t={ts_rel:.0f}s hr={hr_str} bpm spo2={spo2_str} %")
 
         elif ptype == "M":
             _, ts, state, event_val, impact = decoded
@@ -113,7 +121,7 @@ def handle_notification(sender: int, data: bytearray):
             state_name = STATE_NAMES.get(state, f"UNKNOWN_STATE_{state}")
 
             print(
-                f"[BLE RX][IMU] t={ts_rel:.2f}s "
+                f"[BLE RX][IMU] t={ts_rel:.0f}s "
                 f"state={state_name} event={event_val:.2f} impact={impact:.2f}"
             )
 
@@ -121,10 +129,8 @@ def handle_notification(sender: int, data: bytearray):
             _, raw = decoded
             print(f"[BLE RX] Unknown packet type: {raw[0]} (raw={raw.hex()})")
 
-
 async def main():
-    await run_ble(DEVICE_NAME, TX_CHAR_UUID, handle_notification)
-
+    await run_ble(DEVICE_NAME, TX_CHAR_UUID, handle_notification, on_reconnect=reset_state)
 
 if __name__ == "__main__":
     asyncio.run(main())

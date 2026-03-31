@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from models import SoldierInfo
+from gui.models import SoldierInfo
 from theme import (
     ACCENT,
     ACCENT_HOVER,
@@ -50,7 +50,7 @@ class AddSoldierDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Add Soldier")
         self.setModal(True)
-        self.result_data = None
+        self.result_data = None  # Populated with form data on successful save
 
         self.setStyleSheet(f"""
             QDialog {{
@@ -89,7 +89,7 @@ class AddSoldierDialog(QDialog):
         title.setStyleSheet(f"font-size: 17px; font-weight: 800; color: {TEXT};")
         layout.addWidget(title)
 
-        subtitle = QLabel("Enter the soldier’s internal record information.")
+        subtitle = QLabel("Enter the soldier's internal record information.")
         subtitle.setStyleSheet(f"font-size: 12px; color: {TEXT_DIM};")
         layout.addWidget(subtitle)
 
@@ -103,7 +103,7 @@ class AddSoldierDialog(QDialog):
         self.age_edit.setPlaceholderText("Age")
 
         self.device_edit = QLineEdit()
-        self.device_edit.setPlaceholderText("Device ID")
+        self.device_edit.setPlaceholderText("Device ID")  # Must match DEVICE_ID in main.py
 
         layout.addWidget(self.sid_edit)
         layout.addWidget(self.name_edit)
@@ -146,6 +146,7 @@ class AddSoldierDialog(QDialog):
         self.fit_to_screen()
 
     def fit_to_screen(self):
+        # Size the dialog relative to screen size with sensible min/max bounds
         screen = self.screen() or QApplication.primaryScreen()
         if screen is None:
             self.resize(460, 320)
@@ -162,6 +163,7 @@ class AddSoldierDialog(QDialog):
         age_raw = self.age_edit.text().strip()
         device_id = self.device_edit.text().strip()
 
+        # Validate required fields before accepting
         if not sid:
             QMessageBox.warning(self, "Missing Soldier ID", "Please enter a soldier ID.")
             return
@@ -172,6 +174,7 @@ class AddSoldierDialog(QDialog):
             QMessageBox.warning(self, "Missing Device ID", "Please enter a device ID.")
             return
 
+        # Age is optional but must be a valid positive integer if provided
         age = None
         if age_raw:
             try:
@@ -192,6 +195,7 @@ class AddSoldierDialog(QDialog):
 
 
 class SoldierCard(QFrame):
+    # Emits the soldier_id when the card is clicked
     clicked = Signal(str)
 
     def __init__(self, soldier_id: str, info: SoldierInfo, parent=None):
@@ -211,6 +215,7 @@ class SoldierCard(QFrame):
         self.root_layout.setContentsMargins(18, 18, 18, 18)
         self.root_layout.setSpacing(12)
 
+        # Header row: soldier ID, name, status pill
         header = QHBoxLayout()
         header.setSpacing(10)
 
@@ -238,6 +243,7 @@ class SoldierCard(QFrame):
         divider.setStyleSheet(f"background: {DIVIDER}; border: none;")
         self.root_layout.addWidget(divider)
 
+        # Hero boxes: large HR and SpO2 values
         self.hero_row = QHBoxLayout()
         self.hero_row.setSpacing(12)
 
@@ -248,6 +254,7 @@ class SoldierCard(QFrame):
         self.hero_row.addWidget(self.spo2_box, 2)
         self.root_layout.addLayout(self.hero_row)
 
+        # Detail rows: HR zone, condition, link, last movement
         self.rows_container = QWidget()
         self.rows_container.setStyleSheet("background: transparent; border: none;")
         self.rows_layout = QVBoxLayout(self.rows_container)
@@ -255,7 +262,7 @@ class SoldierCard(QFrame):
         self.rows_layout.setSpacing(8)
 
         self.hr_zone_row = self._make_detail_row("HR Zone", "--")
-        self.condition_row = self._make_detail_row("Condition", "--")
+        self.condition_row = self._make_detail_row("Activity", "--")
         self.link_row = self._make_detail_row("Link", "--")
         self.last_move_row = self._make_detail_row("Last Move", "--")
 
@@ -271,6 +278,7 @@ class SoldierCard(QFrame):
         self.apply_card_style()
 
     def _make_hero_box(self, label_text, value_text):
+        # Large metric box used for HR and SpO2 — label on top, big value below
         box = QFrame()
         box.setObjectName("heroBox")
         box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -282,6 +290,7 @@ class SoldierCard(QFrame):
         label = QLabel(label_text)
         value = QLabel(value_text)
 
+        # Store references so set_values() can update them directly
         box.small_label = label
         box.value_label = value
 
@@ -290,6 +299,7 @@ class SoldierCard(QFrame):
         return box
 
     def _make_detail_row(self, left_text, right_text):
+        # Key-value row used for secondary metrics at the bottom of each card
         container = QWidget()
         container.setStyleSheet("background: transparent; border: none;")
 
@@ -314,9 +324,10 @@ class SoldierCard(QFrame):
 
     def set_selected(self, selected: bool):
         self.selected = selected
-        self.apply_card_style()
+        self.apply_card_style()  # Border color changes to reflect selection
 
     def set_status(self, text: str, kind: str):
+        # Update the status pill color and text based on triage classification
         self.status_kind = kind
 
         if kind == "STABLE":
@@ -345,6 +356,7 @@ class SoldierCard(QFrame):
         self.apply_card_style()
 
     def apply_card_style(self):
+        # Card border and background shift based on status and selection state
         border = self.status_border if self.status_kind == "CRITICAL" else BORDER_SOFT
         if self.selected:
             border = ACCENT if self.status_kind != "CRITICAL" else CRITICAL_BORDER
@@ -352,6 +364,7 @@ class SoldierCard(QFrame):
         card_start = CARD
         card_end = CARD_2
 
+        # Signal-lost cards get a dimmer background to visually indicate no data
         if self.status_kind == "LOST":
             card_start = "#0d131b"
             card_end = "#101722"
@@ -375,6 +388,7 @@ class SoldierCard(QFrame):
         """)
 
     def set_values(self, hr_text, hr_zone_text, spo2_text, condition_text, link_text, last_move_text):
+        # Update all displayed values — called by refresh_ui_elements in triage_gui
         self.hr_box.value_label.setText(hr_text)
         self.spo2_box.value_label.setText(spo2_text)
         self.hr_zone_row["right"].setText(hr_zone_text)
@@ -382,7 +396,45 @@ class SoldierCard(QFrame):
         self.link_row["right"].setText(link_text)
         self.last_move_row["right"].setText(last_move_text)
 
+    def set_hero_alerts(self, hr, spo2):
+        # Color each hero box independently based on how critical that value is
+        hr_bg = HERO_BG
+        spo2_bg = HERO_BG
+        hr_border = BORDER
+        spo2_border = BORDER
+
+        try:
+            hr = float(hr)
+            if hr > 130:
+                hr_bg, hr_border = CRITICAL_BG, CRITICAL_BORDER
+            elif hr > 100:
+                hr_bg, hr_border = MONITOR_BG, MONITOR_BORDER
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            spo2 = float(spo2)
+            if spo2 < 92:
+                spo2_bg, spo2_border = CRITICAL_BG, CRITICAL_BORDER
+            elif spo2 < 95:
+                spo2_bg, spo2_border = MONITOR_BG, MONITOR_BORDER
+        except (TypeError, ValueError):
+            pass
+
+        box_style = """
+            QFrame#heroBox {{
+                background: {bg};
+                border: 1px solid {border};
+                border-radius: 12px;
+            }}
+        """
+
+        self.hr_box.setStyleSheet(box_style.format(bg=hr_bg, border=hr_border))
+        self.spo2_box.setStyleSheet(box_style.format(bg=spo2_bg, border=spo2_border))
+
     def apply_scale(self, scale_name: str):
+        # Font sizes and spacing scale down as more cards are shown simultaneously
+        # group_1 = 1 card (largest), group_5_8 = 5–8 cards (smallest)
         scales = {
             "group_1": {
                 "sid": 30, "name": 16, "pill": 11,
@@ -435,6 +487,8 @@ class SoldierCard(QFrame):
         }
 
         s = scales[scale_name]
+
+        # Apply layout spacing for this scale
         self.root_layout.setContentsMargins(*s["margins"])
         self.root_layout.setSpacing(s["spacing"])
         self.hero_row.setSpacing(s["hero_gap"])
@@ -463,6 +517,7 @@ class SoldierCard(QFrame):
             f"color: {TEXT_DIM}; font-weight: 700; background: transparent; border: none;"
         )
 
+        # Consolas used for numeric values — monospaced keeps layout stable as digits change
         self.hr_box.value_label.setFont(QFont("Consolas", s["hero_value"], QFont.Bold))
         self.hr_box.value_label.setStyleSheet(
             f"color: {TEXT}; font-weight: 800; background: transparent; border: none;"
@@ -488,5 +543,6 @@ class SoldierCard(QFrame):
             )
 
     def mousePressEvent(self, event):
+        # Forward click to the dashboard so it can toggle selection in the roster list
         self.clicked.emit(self.soldier_id)
         super().mousePressEvent(event)

@@ -1,4 +1,4 @@
-import math
+# demo.py
 import random
 import sys
 
@@ -6,12 +6,14 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from triage_gui import DashboardWindow
-from models import SoldierInfo
+from gui.models import SoldierInfo
 from theme import DEMO_MIN_UPDATE_MS, DEMO_MAX_UPDATE_MS
+
 
 class DemoController:
     def __init__(self, window: DashboardWindow):
         self.window = window
+        # Timer fires at random intervals to simulate irregular data arrival
         self.timer = QTimer(window)
         self.timer.timeout.connect(self.update_display_loop)
 
@@ -22,6 +24,7 @@ class DemoController:
         self.schedule_next_demo_update()
 
     def seed_demo_data(self):
+        # Pre-populate the roster with fictional soldiers and device IDs
         demo = [
             ("A-201", "Atlas", 24, "DEV007"),
             ("B-147", "Nova", 29, "DEV012"),
@@ -43,9 +46,22 @@ class DemoController:
         if not self.window.device_to_soldier:
             return
 
-        motion_states = ["STATIONARY", "WALKING", "RUNNING", "PRONE", "NO DATA", "IDLE_FALL"]
-        link_states = ["ACTIVE", "ACTIVE", "ACTIVE", "DEGRADED", "ACTIVE"]
+        # Real firmware motion states only — weighted toward normal activity
+        motion_states = [
+            "IDLE_FALL",              # normal monitoring, no trigger
+            "IDLE_FALL",
+            "WALKING",
+            "WALKING",
+            "RUNNING",
+            "RUNNING",
+            "JUMPING_OR_QUICK_SIT",
+            "DETECTED_FALL",
+            "STATIONARY_POST_FALL",
+        ]
+        # LOST is rare — BLE is generally reliable in demo
+        link_states = ["ACTIVE", "ACTIVE", "ACTIVE", "ACTIVE", "LOST"]
 
+        # Each tick updates a random subset of devices to simulate staggered data arrival
         device_ids = list(self.window.device_to_soldier.keys())
         num_updates = random.randint(1, min(3, len(device_ids)))
         chosen_devices = random.sample(device_ids, num_updates)
@@ -59,6 +75,7 @@ class DemoController:
             info = self.window.roster.get(soldier_id)
             age = info.age if info and info.age is not None else 25
 
+            # Generate HR within a randomly chosen training zone for this soldier
             max_hr = 220 - age
             zone_choice = random.choice([1, 2, 3, 4, 5])
 
@@ -78,12 +95,14 @@ class DemoController:
 
             new_hr = random.randint(hr_low, hr_high)
             new_motion = random.choice(motion_states)
+            # SpO2 drifts ±1% per tick, clamped to a plausible range
             new_spo2 = max(87, min(100, state["spo2"] + random.randint(-1, 1)))
             new_link = random.choice(link_states)
 
+            # Nudge HR to be consistent with motion state where possible
             if new_motion == "RUNNING" and zone_choice <= 2:
                 new_hr = random.randint(int(max_hr * 0.70), int(max_hr * 0.88))
-            if new_motion == "STATIONARY" and zone_choice >= 5:
+            if new_motion == "IDLE_FALL" and zone_choice >= 5:
                 new_hr = random.randint(int(max_hr * 0.65), int(max_hr * 0.85))
 
             self.window.handle_incoming_packet(
@@ -95,6 +114,7 @@ class DemoController:
             )
 
     def schedule_next_demo_update(self):
+        # Random interval between updates simulates irregular BLE packet arrival
         interval = random.randint(DEMO_MIN_UPDATE_MS, DEMO_MAX_UPDATE_MS)
         self.timer.start(interval)
 
@@ -103,6 +123,7 @@ class DemoController:
         self.simulate_updates()
         self.window.refresh_ui_elements()
         self.schedule_next_demo_update()
+
 
 def main():
     app = QApplication(sys.argv)
@@ -114,6 +135,7 @@ def main():
 
     window.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()
