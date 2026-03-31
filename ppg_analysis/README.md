@@ -1,3 +1,5 @@
+# PPG Analysis
+
 This folder contains the PPG calibration and analysis pipeline.
 
 Workflow:

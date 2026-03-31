@@ -1,0 +1,42 @@
+# theme.py
+
+MAX_DISPLAYED_SOLDIERS = 8
+DEMO_MIN_UPDATE_MS = 10000
+DEMO_MAX_UPDATE_MS = 20000
+
+# Theme
+BG = "#08101b"
+SURFACE = "#0d1624"
+SURFACE_2 = "#111c2d"
+CARD = "#101a2a"
+CARD_2 = "#142033"
+HERO_BG = "#0b1422"
+
+BORDER = "#223149"
+BORDER_SOFT = "#2a3a55"
+DIVIDER = "#1c2a40"
+
+TEXT = "#edf4ff"
+TEXT_SOFT = "#b8c7db"
+TEXT_DIM = "#8ea1ba"
+
+ACCENT = "#59a8ff"
+ACCENT_HOVER = "#7cbcff"
+
+LIVE = "#6fc3ff"
+
+STABLE_BG = "#14324b"
+STABLE_FG = "#cfe8ff"
+STABLE_BORDER = "#2e6aa0"
+
+MONITOR_BG = "#4a3411"
+MONITOR_FG = "#ffe4a8"
+MONITOR_BORDER = "#b6842b"
+
+CRITICAL_BG = "#5a1620"
+CRITICAL_FG = "#ffd7de"
+CRITICAL_BORDER = "#ff4d67"
+
+LOST_BG = "#1b2430"
+LOST_FG = "#a8b4c4"
+LOST_BORDER = "#38475c"

@@ -1,227 +1,606 @@
-import tkinter as tk
-import random
+# triage_gui.py
+import csv
+import math
+import sys
 import time
+from typing import Dict, List
 
-# CONFIGURATION (COMBAT TRIAGE)
-UPDATE_INTERVAL = 1000
-IMMOBILE_CRITICAL = 10        # seconds
-IMMOBILE_UNRESPONSIVE = 60    # seconds
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-# MAIN
-class TriageGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Soldier Triage Monitor")
-        self.root.geometry("440x720")
-        self.root.configure(bg="#121212")
+from models import SoldierInfo, calculate_hr_zone, display_motion_label
+from theme import (
+    ACCENT,
+    ACCENT_HOVER,
+    BG,
+    BORDER,
+    DIVIDER,
+    LIVE,
+    MAX_DISPLAYED_SOLDIERS,
+    SURFACE,
+    SURFACE_2,
+    TEXT,
+    TEXT_DIM,
+    TEXT_SOFT,
+)
+from widgets import AddSoldierDialog, SoldierCard
 
-        self.last_motion_time = time.time()
-        self.fall_detected = False
-        self.data_link_status = "ACTIVE"
+class DashboardWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Tactical Triage Monitor")
 
-        self.build_ui()
-        self.update_data()
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen else None
 
-    # UI
-    def build_ui(self):
-        tk.Label(
-            self.root,
-            text="SOLDIER ID: A-17",
-            font=("Helvetica", 18, "bold"),
-            fg="white",
-            bg="#121212"
-        ).pack(pady=10)
+        if avail:
+            win_w = min(1360, max(980, avail.width() - 40))
+            win_h = min(860, max(620, avail.height() - 40))
+            self.resize(win_w, win_h)
 
-        self.status_label = tk.Label(
-            self.root,
-            text="STATUS: STABLE",
-            font=("Helvetica", 26, "bold"),
-            fg="lime",
-            bg="#121212"
+            # Minimum size that supports 5–8 panels without clipping
+            self.setMinimumSize(1260, 820)
+
+            x = avail.x() + (avail.width() - win_w) // 2
+            y = avail.y() + (avail.height() - win_h) // 2
+            self.move(x, y)
+        else:
+            self.resize(1200, 760)
+            self.setMinimumSize(900, 560)
+
+        self.roster: Dict[str, SoldierInfo] = {}
+        self.device_to_soldier: Dict[str, str] = {}
+        self.soldier_state: Dict[str, dict] = {}
+        self.card_widgets: Dict[str, SoldierCard] = {}
+        self.selected_ids: List[str] = []
+        self.live_pulse_on = True
+
+        self._build_ui()
+        self._apply_styles()
+        self.refresh_roster_list(select_first=False)
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+
+        root = QHBoxLayout(central)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(14)
+
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(240)
+
+        sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(16, 16, 16, 16)
+        sidebar_layout.setSpacing(10)
+
+        roster_title = QLabel("ROSTER")
+        roster_title.setStyleSheet(f"color: {TEXT}; font-weight: 800; font-size: 13px;")
+        sidebar_layout.addWidget(roster_title)
+
+        roster_desc = QLabel("Import personnel or add them manually.")
+        roster_desc.setWordWrap(True)
+        roster_desc.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
+        sidebar_layout.addWidget(roster_desc)
+
+        self.import_btn = QPushButton("Import CSV")
+        self.import_btn.clicked.connect(self.load_roster_csv)
+        self.import_btn.setObjectName("primaryButton")
+        sidebar_layout.addWidget(self.import_btn)
+
+        self.add_btn = QPushButton("Add Soldier")
+        self.add_btn.clicked.connect(self.open_add_soldier_dialog)
+        self.add_btn.setObjectName("secondaryButton")
+        sidebar_layout.addWidget(self.add_btn)
+
+        self.deselect_btn = QPushButton("Deselect All")
+        self.deselect_btn.clicked.connect(self.deselect_all)
+        self.deselect_btn.setObjectName("secondaryButton")
+        sidebar_layout.addWidget(self.deselect_btn)
+
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {DIVIDER}; border: none;")
+        sidebar_layout.addWidget(divider)
+
+        select_label = QLabel("SELECT IDS")
+        select_label.setStyleSheet(f"color: {TEXT_SOFT}; font-weight: 800; font-size: 12px;")
+        sidebar_layout.addWidget(select_label)
+
+        self.soldier_list = QListWidget()
+        self.soldier_list.setSelectionMode(QListWidget.MultiSelection)
+        self.soldier_list.itemSelectionChanged.connect(self.on_roster_select)
+        sidebar_layout.addWidget(self.soldier_list, 1)
+
+        limit_label = QLabel(f"Display limit: {MAX_DISPLAYED_SOLDIERS}")
+        limit_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        sidebar_layout.addWidget(limit_label)
+
+        self.main_panel = QFrame()
+        self.main_panel.setObjectName("mainPanel")
+
+        main_layout = QVBoxLayout(self.main_panel)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(12)
+
+        header = QHBoxLayout()
+        header.setSpacing(10)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(1)
+
+        title = QLabel("TRIAGE DASHBOARD")
+        title.setStyleSheet(
+            f"color: {TEXT}; font-size: 24px; font-weight: 900; letter-spacing: 1px;"
         )
-        self.status_label.pack(pady=10)
+        subtitle = QLabel("Live monitoring view for selected personnel")
+        subtitle.setStyleSheet(f"color: {TEXT_DIM}; font-size: 12px;")
 
-        self.hr_label, self.hr_flag = self.create_metric("HEART RATE", "BPM")
-        self.spo2_label, self.spo2_flag = self.create_metric("SpO2", "%")
-        self.bp_label, self.bp_flag = self.create_metric("BLOOD PRESSURE", "mmHg")
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
 
-        self.fall_label = tk.Label(
-            self.root,
-            text="FALL STATUS: NO FALL DETECTED",
-            font=("Helvetica", 16),
-            fg="lime",
-            bg="#121212"
+        header.addLayout(title_col)
+        header.addStretch()
+
+        live_row = QHBoxLayout()
+        live_row.setSpacing(5)
+
+        self.pulse_dot = QLabel("●")
+        self.pulse_dot.setStyleSheet(f"color: {LIVE}; font-size: 14px; font-weight: 800;")
+        self.live_label = QLabel("LIVE")
+        self.live_label.setStyleSheet(f"color: {TEXT_SOFT}; font-size: 11px; font-weight: 800;")
+
+        live_row.addWidget(self.pulse_dot)
+        live_row.addWidget(self.live_label)
+        header.addLayout(live_row)
+
+        main_layout.addLayout(header)
+
+        self.empty_label = QLabel("Select up to eight IDs from the roster.")
+        self.empty_label.setAlignment(Qt.AlignCenter)
+        self.empty_label.setStyleSheet(f"color: {TEXT_DIM}; font-size: 13px;")
+
+        self.cards_container = QWidget()
+        self.cards_layout = QGridLayout(self.cards_container)
+        self.cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cards_layout.setHorizontalSpacing(10)
+        self.cards_layout.setVerticalSpacing(10)
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setWidget(self.cards_container)
+
+        main_layout.addWidget(self.empty_label)
+        main_layout.addWidget(self.scroll, 1)
+
+        root.addWidget(self.sidebar)
+        root.addWidget(self.main_panel, 1)
+
+    def _apply_styles(self):
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{
+                background: {BG};
+                color: {TEXT};
+                font-family: Bahnschrift, Segoe UI, Arial;
+            }}
+
+            QFrame#sidebar {{
+                background: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {SURFACE_2},
+                    stop:1 {SURFACE}
+                );
+                border: 1px solid {BORDER};
+                border-radius: 16px;
+            }}
+
+            QFrame#mainPanel {{
+                background: transparent;
+                border: none;
+            }}
+
+            QListWidget {{
+                background: {BG};
+                border: 1px solid {BORDER};
+                border-radius: 12px;
+                padding: 4px;
+                color: {TEXT};
+                font-size: 13px;
+                outline: none;
+            }}
+
+            QListWidget::item {{
+                padding: 9px 10px;
+                border-radius: 8px;
+                margin: 2px 0;
+            }}
+
+            QListWidget::item:selected {{
+                background: #16283d;
+                color: {TEXT};
+                border: 1px solid {ACCENT};
+            }}
+
+            QPushButton#primaryButton {{
+                background: {ACCENT};
+                color: #07111d;
+                border: none;
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-weight: 800;
+                font-size: 12px;
+                text-align: center;
+            }}
+
+            QPushButton#primaryButton:hover {{
+                background: {ACCENT_HOVER};
+            }}
+
+            QPushButton#secondaryButton {{
+                background: #132033;
+                color: {TEXT};
+                border: 1px solid {BORDER};
+                border-radius: 10px;
+                padding: 10px 12px;
+                font-weight: 700;
+                font-size: 12px;
+                text-align: center;
+            }}
+
+            QPushButton#secondaryButton:hover {{
+                background: #192941;
+            }}
+
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+        """)
+
+    def make_default_state(self):
+        return {
+            "hr": 70,
+            "spo2": 98,
+            "motion_state": "STATIONARY",
+            "fall_detected": False,
+            "last_motion_time": time.time(),
+            "data_link_status": "ACTIVE",
+        }
+
+    def rebuild_device_mapping(self):
+        self.device_to_soldier.clear()
+        for sid, info in self.roster.items():
+            device_id = str(info.device_id).strip()
+            if device_id:
+                self.device_to_soldier[device_id] = sid
+
+    def refresh_roster_list(self, select_first=False, selected_ids=None):
+        if selected_ids is None:
+            selected_ids = []
+
+        self.soldier_list.blockSignals(True)
+        self.soldier_list.clear()
+
+        roster_ids = list(self.roster.keys())
+        for sid in roster_ids:
+            item = QListWidgetItem(f"{sid}  |  {self.roster[sid].name}")
+            item.setData(Qt.UserRole, sid)
+            self.soldier_list.addItem(item)
+
+        if select_first and roster_ids:
+            limit = min(MAX_DISPLAYED_SOLDIERS, len(roster_ids))
+            for i in range(limit):
+                self.soldier_list.item(i).setSelected(True)
+        else:
+            for i in range(self.soldier_list.count()):
+                item = self.soldier_list.item(i)
+                sid = item.data(Qt.UserRole)
+                item.setSelected(sid in selected_ids)
+
+        self.soldier_list.blockSignals(False)
+        self.on_roster_select()
+
+    def deselect_all(self):
+        self.soldier_list.blockSignals(True)
+        for i in range(self.soldier_list.count()):
+            self.soldier_list.item(i).setSelected(False)
+        self.soldier_list.blockSignals(False)
+        self.selected_ids = []
+        self.render_cards()
+
+    def open_add_soldier_dialog(self):
+        dlg = AddSoldierDialog(self)
+
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            dlg_w = min(460, max(360, avail.width() - 80))
+            dlg_h = min(360, max(280, avail.height() - 80))
+            dlg.resize(dlg_w, dlg_h)
+
+            parent_geo = self.frameGeometry()
+            x = parent_geo.center().x() - dlg_w // 2
+            y = parent_geo.center().y() - dlg_h // 2
+
+            x = max(avail.left(), min(x, avail.right() - dlg_w))
+            y = max(avail.top(), min(y, avail.bottom() - dlg_h))
+            dlg.move(x, y)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        data = dlg.result_data
+        sid = data["sid"]
+        name = data["name"]
+        age = data["age"]
+        device_id = data["device_id"]
+
+        if sid in self.roster:
+            QMessageBox.warning(self, "Duplicate Soldier ID", f"Soldier ID '{sid}' already exists.")
+            return
+
+        if device_id in self.device_to_soldier:
+            QMessageBox.warning(self, "Duplicate Device ID", f"Device ID '{device_id}' is already assigned.")
+            return
+
+        current_selected = self.selected_ids[:]
+
+        self.roster[sid] = SoldierInfo(name=name, age=age, device_id=device_id)
+        self.soldier_state[sid] = self.make_default_state()
+        self.rebuild_device_mapping()
+
+        if len(current_selected) < MAX_DISPLAYED_SOLDIERS:
+            current_selected.append(sid)
+
+        self.refresh_roster_list(selected_ids=current_selected)
+
+    def load_roster_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select roster CSV", "", "CSV files (*.csv);;All files (*)"
         )
-        self.fall_label.pack(pady=10)
+        if not path:
+            return
 
-        self.immobile_label = tk.Label(
-            self.root,
-            text="IMMOBILE TIME: 0 s",
-            font=("Helvetica", 18, "bold"),
-            fg="white",
-            bg="#121212"
-        )
-        self.immobile_label.pack(pady=5)
+        try:
+            new_roster = {}
+            seen_devices = set()
 
-        self.data_link_label = tk.Label(
-            self.root,
-            text="DATA LINK: ACTIVE",
-            font=("Helvetica", 14, "bold"),
-            fg="lime",
-            bg="#121212"
-        )
-        self.data_link_label.pack(pady=10)
+            with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    sid = (row.get("soldier_id") or row.get("id") or "").strip()
+                    name = (row.get("name") or row.get("callsign") or sid).strip()
+                    device_id = (
+                        row.get("device_id") or row.get("DeviceID") or row.get("device") or ""
+                    ).strip()
+                    age_raw = str(row.get("age") or row.get("Age") or row.get("AGE") or "").strip()
 
-        # Interpretation line
-        tk.Label(
-            self.root,
-            text="INTERPRETATION: COMBAT TRIAGE THRESHOLDS",
-            font=("Helvetica", 11, "italic"),
-            fg="gray",
-            bg="#121212"
-        ).pack(pady=10)
+                    if not sid:
+                        continue
+                    if not device_id:
+                        raise ValueError(f"Missing device_id for soldier '{sid}'.")
 
-    def create_metric(self, title, unit):
-        frame = tk.Frame(self.root, bg="#1f1f1f", pady=10)
-        frame.pack(fill="x", padx=20, pady=8)
+                    if device_id in seen_devices:
+                        raise ValueError(f"Duplicate device_id found in CSV: '{device_id}'")
+                    seen_devices.add(device_id)
 
-        tk.Label(
-            frame,
-            text=title,
-            font=("Helvetica", 16, "bold"),
-            fg="white",
-            bg="#1f1f1f"
-        ).pack()
+                    age = None
+                    if age_raw:
+                        try:
+                            age = int(float(age_raw))
+                        except ValueError:
+                            age = None
 
-        value_label = tk.Label(
-            frame,
-            text=f"-- {unit}",
-            font=("Helvetica", 26),
-            fg="white",
-            bg="#1f1f1f"
-        )
-        value_label.pack()
+                    new_roster[sid] = SoldierInfo(name=name, age=age, device_id=device_id)
 
-        flag_label = tk.Label(
-            frame,
-            text="STATUS: NORMAL",
-            font=("Helvetica", 14, "bold"),
-            fg="black",
-            bg="lime",
-            width=18
-        )
-        flag_label.pack(pady=5)
+            if not new_roster:
+                raise ValueError("No valid rows found. Expected soldier_id/id and device_id columns.")
 
-        return value_label, flag_label
+            self.roster = new_roster
+            self.soldier_state = {
+                sid: self.soldier_state.get(sid, self.make_default_state())
+                for sid in self.roster
+            }
+            self.rebuild_device_mapping()
+            self.refresh_roster_list(selected_ids=[])
 
-    # SIMULATION
-    def simulate_sensors(self):
-        immobile_time = int(time.time() - self.last_motion_time)
+        except Exception as e:
+            QMessageBox.critical(self, "CSV Import Failed", str(e))
 
-        if immobile_time >= IMMOBILE_UNRESPONSIVE:
-            hr = 0
-            spo2 = random.randint(75, 89)
-        else:
-            hr = random.randint(45, 190)
-            spo2 = random.randint(88, 99)
+    def on_roster_select(self):
+        items = self.soldier_list.selectedItems()
+        selected_ids = [item.data(Qt.UserRole) for item in items]
 
-        sys = random.randint(80, 170)
-        dia = random.randint(50, 100)
+        if len(selected_ids) > MAX_DISPLAYED_SOLDIERS:
+            self.soldier_list.blockSignals(True)
+            items[-1].setSelected(False)
+            self.soldier_list.blockSignals(False)
+            QMessageBox.information(
+                self,
+                "Display Limit",
+                f"You can display up to {MAX_DISPLAYED_SOLDIERS} soldiers at once.",
+            )
+            selected_ids = [item.data(Qt.UserRole) for item in self.soldier_list.selectedItems()]
 
-        motion = random.choice([True] * 7 + [False] * 3)
-        if motion:
-            self.last_motion_time = time.time()
-            self.fall_detected = False
-        else:
-            self.fall_detected = True
+        self.selected_ids = selected_ids
+        self.render_cards()
 
-        return hr, spo2, sys, dia
+    def get_grid_columns(self, count):
+        if count <= 1:
+            return 1
+        if count == 2:
+            return 2
+        if count <= 4:
+            return 2
+        return 4
 
-    def simulate_data_link(self):
-        r = random.random()
-        if r < 0.8:
-            return "ACTIVE"
-        elif r < 0.95:
-            return "INTERMITTENT"
-        else:
-            return "LOST"
+    def get_scale_name(self, count):
+        if count == 1:
+            return "group_1"
+        if count == 2:
+            return "group_2"
+        if 3 <= count <= 4:
+            return "group_3_4"
+        return "group_5_8"
 
-    # UPDATE LOOP
-    def update_data(self):
-        hr, spo2, sys, dia = self.simulate_sensors()
-        immobile_time = int(time.time() - self.last_motion_time)
+    def clear_cards(self):
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self.card_widgets.clear()
 
-        self.hr_label.config(text=f"{hr} BPM")
-        self.spo2_label.config(text=f"{spo2} %")
-        self.bp_label.config(text=f"{sys}/{dia} mmHg")
+    def render_cards(self):
+        self.clear_cards()
 
-        self.set_flag(self.hr_flag, self.hr_status(hr))
-        self.set_flag(self.spo2_flag, self.spo2_status(spo2))
-        self.set_flag(self.bp_flag, self.bp_status(sys))
+        if not self.selected_ids:
+            self.empty_label.show()
+            return
 
-        self.immobile_label.config(text=f"IMMOBILE TIME: {immobile_time} s")
+        self.empty_label.hide()
 
-        if self.fall_detected:
-            self.fall_label.config(text="FALL STATUS: FALL DETECTED", fg="red")
-        else:
-            self.fall_label.config(text="FALL STATUS: NO FALL DETECTED", fg="lime")
+        count = len(self.selected_ids)
+        cols = self.get_grid_columns(count)
+        rows = math.ceil(count / cols)
+        scale_name = self.get_scale_name(count)
 
-        status, color = self.evaluate_health(hr, spo2, immobile_time)
-        self.status_label.config(text=f"STATUS: {status}", fg=color)
+        for i in range(6):
+            self.cards_layout.setColumnStretch(i, 0)
+            self.cards_layout.setRowStretch(i, 0)
 
-        link = self.simulate_data_link()
-        self.data_link_label.config(
-            text=f"DATA LINK: {link}",
-            fg="lime" if link == "ACTIVE" else "yellow" if link == "INTERMITTENT" else "red"
-        )
+        for c in range(cols):
+            self.cards_layout.setColumnStretch(c, 1)
+        for r in range(rows):
+            self.cards_layout.setRowStretch(r, 1)
 
-        self.root.after(UPDATE_INTERVAL, self.update_data)
+        for idx, sid in enumerate(self.selected_ids):
+            card = SoldierCard(sid, self.roster[sid])
+            card.apply_scale(scale_name)
+            card.clicked.connect(self.toggle_card_selection)
 
-    # STATUS LOGIC (COMBAT)
-    def set_flag(self, label, status):
-        colors = {"NORMAL": "lime", "WARNING": "yellow", "CRITICAL": "red"}
-        label.config(text=f"STATUS: {status}", bg=colors[status])
+            row = idx // cols
+            col = idx % cols
+            self.cards_layout.addWidget(card, row, col)
+            self.card_widgets[sid] = card
 
-    def hr_status(self, hr):
-        if hr < 50 or hr > 175:
-            return "CRITICAL"
-        elif hr < 60:
-            return "WARNING"
-        else:
-            return "NORMAL"
+        self.refresh_ui_elements()
 
-    def spo2_status(self, spo2):
-        if spo2 < 92:
-            return "CRITICAL"
-        elif spo2 < 95:
-            return "WARNING"
-        else:
-            return "NORMAL"
+    def toggle_card_selection(self, sid):
+        for i in range(self.soldier_list.count()):
+            item = self.soldier_list.item(i)
+            if item.data(Qt.UserRole) == sid:
+                item.setSelected(not item.isSelected())
+                break
+        self.on_roster_select()
 
-    def bp_status(self, sys):
-        if sys <= 100 or sys >= 160:
-            return "CRITICAL"
-        elif sys < 100 or sys >= 140:
-            return "WARNING"
-        else:
-            return "NORMAL"
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.render_cards()
 
-    def evaluate_health(self, hr, spo2, immobile):
-        if immobile >= IMMOBILE_UNRESPONSIVE and (hr == 0 or spo2 < 90):
-            return "UNRESPONSIVE", "red"
-        elif (
-            hr < 50 or hr > 175 or
-            spo2 < 92 or
-            immobile >= IMMOBILE_CRITICAL
-        ):
-            return "CRITICAL", "red"
-        elif spo2 < 95 or hr < 60:
-            return "MONITOR", "yellow"
-        else:
-            return "STABLE", "lime"
+    def get_status_for_state(self, state):
+        hr = state.get("hr", 0)
+        spo2 = state.get("spo2", 100)
+        motion = state.get("motion_state", "")
 
-# RUN
+        if motion == "NO DATA":
+            return "SIGNAL LOST", "LOST"
+        if motion == "IDLE_FALL" or hr > 130 or spo2 < 92:
+            return "CRITICAL", "CRITICAL"
+        if hr > 100 or spo2 < 95:
+            return "MONITOR", "MONITOR"
+        return "STABLE", "STABLE"
+
+    def refresh_ui_elements(self):
+        self.live_pulse_on = not self.live_pulse_on
+        live_color = LIVE if self.live_pulse_on else TEXT_DIM
+        self.pulse_dot.setStyleSheet(f"color: {live_color}; font-size: 14px; font-weight: 800;")
+
+        for sid, card in self.card_widgets.items():
+            state = self.soldier_state.get(sid, {})
+            info = self.roster.get(sid)
+
+            status_text, status_kind = self.get_status_for_state(state)
+            hr_val = state.get("hr", "--")
+            spo2_val = state.get("spo2", "--")
+            motion_text = display_motion_label(state.get("motion_state"))
+            link_text = state.get("data_link_status", "--")
+            last_move_sec = max(0, int(time.time() - state.get("last_motion_time", time.time())))
+            age_val = info.age if info else None
+            hr_zone_text = calculate_hr_zone(age_val, hr_val)
+
+            card.set_values(
+                "-- bpm" if hr_val == "--" else f"{hr_val} bpm",
+                hr_zone_text,
+                "--%" if spo2_val == "--" else f"{spo2_val}%",
+                motion_text,
+                link_text,
+                f"{last_move_sec}s ago",
+            )
+            card.set_status(status_text, status_kind)
+            card.set_selected(sid in self.selected_ids)
+
+    def update_soldier_data(self, soldier_id, **kwargs):
+        if soldier_id not in self.soldier_state:
+            self.soldier_state[soldier_id] = self.make_default_state()
+
+        state = self.soldier_state[soldier_id]
+        for key, value in kwargs.items():
+            state[key] = value
+            if key == "motion_state" and value not in ["NO DATA", "IDLE_FALL"]:
+                state["last_motion_time"] = time.time()
+
+    def handle_incoming_packet(
+        self,
+        device_id,
+        hr=None,
+        spo2=None,
+        motion_state=None,
+        link_status="ACTIVE",
+    ):
+        if not device_id:
+            return
+
+        soldier_id = self.device_to_soldier.get(device_id)
+        if soldier_id is None:
+            return
+
+        updates = {"data_link_status": link_status}
+        if hr is not None:
+            updates["hr"] = hr
+        if spo2 is not None:
+            updates["spo2"] = spo2
+        if motion_state is not None:
+            updates["motion_state"] = motion_state
+            updates["fall_detected"] = (motion_state == "IDLE_FALL")
+
+        self.update_soldier_data(soldier_id, **updates)
+        self.refresh_ui_elements()
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = DashboardWindow()
+    window.show()
+    sys.exit(app.exec())
+
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = TriageGUI(root)
-    root.mainloop()
+    main()
