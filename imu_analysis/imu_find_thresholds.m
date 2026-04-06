@@ -1,6 +1,7 @@
 clear; clc;
 
 tags = ["fall","run","walk","limp","jump","sit","squat"];
+all_idx_sizes = [];
 
 % currently only looking at first samples of each csv file, not each distinct window
 % of data

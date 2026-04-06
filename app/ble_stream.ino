@@ -767,6 +767,7 @@ FALL_STATES analyze_event_score() {
     int high_score_idx = -1;
     int high_score = 0;
 
+    // find event with the highest match score
     for(int i = 0; i < 7; i++) {
         // strictly greater to maintain priority ranking
         if(scores[i] > high_score) {
@@ -775,6 +776,19 @@ FALL_STATES analyze_event_score() {
         }
     }
 
+    // additional fall vs. sit scoring pass to avoid false positives from ties
+    if((high_score_idx = 0) && (scores[0] == scores[5])) {
+      // discriminate based on angle only
+      if(angle_diff >= TILT_TRIGGER) {
+        return DETECTED_FALL;
+      }
+      // no large angle difference, classify as sit
+      else {
+        return SITTING;
+      }
+    }
+
+    // no event matched closely enough, return IDLE
     if(high_score < MIN_SCORE) {
         return IDLE_FALL;
     }
