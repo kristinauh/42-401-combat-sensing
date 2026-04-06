@@ -515,7 +515,7 @@ end
 
 figure;
 confusionchart(norm_labels, predictions);
-title("Signature classifier confusion matrix");
+title("Score-Based Classifier Confusion Matrix");
 %% N_STD sweep
 MIN_SCORE = 3;  % tune this alongside N_STD
 N_STD_range = linspace(0.5, 3.0, 100);

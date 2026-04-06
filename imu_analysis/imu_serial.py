@@ -12,9 +12,9 @@ import serial
 SERIAL_PORT = "COM8"
 BAUD_RATE = 115200
 
-PERSON = "iris"
-ACTIVITY = "jump"
-TRIAL = 2
+PERSON = "test"
+ACTIVITY = "random"
+TRIAL = 0
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
