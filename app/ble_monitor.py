@@ -37,8 +37,8 @@ class PacketParser:
                 spo2_i = struct.unpack_from("<h", pkt, 7)[0]
 
                 # Negative values signal invalid/no reading from the firmware
-                hr = None if hr_i < 0 else hr_i / 100.0
-                spo2 = None if spo2_i < 0 else spo2_i / 100.0
+                hr = None if hr_i <= 0 else hr_i / 100.0
+                spo2 = None if spo2_i <= 0 else spo2_i / 100.0
 
                 decoded_packets.append(("R", ts, hr, spo2))
 
@@ -92,6 +92,24 @@ class PacketParser:
                 rr = None if rr_i < 0 else rr_i / 100.0
 
                 decoded_packets.append(("W", ts, rr))
+
+            # P packet: 'P' + ts(uint32) + sbp(int16 x10) + dbp(int16 x10)
+            elif ptype == "P":
+                pkt_len = 9
+                if len(self.buf) < pkt_len:
+                    break
+
+                pkt = bytes(self.buf[:pkt_len])
+                del self.buf[:pkt_len]
+
+                ts = struct.unpack_from("<I", pkt, 1)[0]
+                sbp_i = struct.unpack_from("<h", pkt, 5)[0]
+                dbp_i = struct.unpack_from("<h", pkt, 7)[0]
+
+                sbp = None if sbp_i < 0 else sbp_i / 10.0
+                dbp = None if dbp_i < 0 else dbp_i / 10.0
+
+                decoded_packets.append(("P", ts, sbp, dbp))
 
             else:
                 # Skip one byte if buffer is misaligned or contains unknown data
@@ -180,7 +198,19 @@ def handle_notification(sender: int, data: bytearray):
             rr_str = "---" if rr is None else f"{rr:.2f}"
 
             print(f"[BLE RX][RR] t={ts_rel:.0f}s rr={rr_str} BrPM")
-            
+
+        elif ptype == "P":
+            _, ts, sbp, dbp = decoded
+
+            if t0 is None:
+                t0 = ts
+
+            ts_rel = (ts - t0) / 1000.0
+            sbp_str = "---" if sbp is None else f"{sbp:.1f}"
+            dbp_str = "---" if dbp is None else f"{dbp:.1f}"
+
+            print(f"[BLE RX][BP] t={ts_rel:.0f}s sbp={sbp_str} mmHg dbp={dbp_str} mmHg")
+        
         else:
             _, raw = decoded
             print(f"[BLE RX] Unknown packet type: {raw[0]} (raw={raw.hex()})")

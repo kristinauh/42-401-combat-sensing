@@ -11,6 +11,7 @@
 #define PPG_SERIAL 0
 #define IMU_SERIAL 0
 #define RR_SERIAL 0
+#define BP_SERIAL 0
 #define BAT_SERIAL 0  // battery
 
 BLEUart bleuart;
@@ -71,6 +72,7 @@ void setup() {
   ppg_setup();
   imu_setup();
   rr_setup();
+  bcg_setup();
 }
 
 void loop() {

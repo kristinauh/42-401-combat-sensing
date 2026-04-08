@@ -501,7 +501,8 @@ void imu_setup() {
 
 // Run strictly once per tick
 void handle_imu() {
-  rr_update(cv.ay);
+  rr_update(cv.ax);
+  bcg_update(cv.ax);
 
   switch (fall_state) {
     case IDLE_FALL:

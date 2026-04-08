@@ -1,6 +1,7 @@
 // ppg.ino
 
 #include <MAX30105.h>
+#include "defines.h"
 
 // PPG settings
 #define FS_HZ 100.0f          // Sampling rate (Hz) — must match sampleRate below
@@ -13,8 +14,8 @@
 #define SPO2_B 4.7242f
 
 // Minimum signal quality thresholds — windows below these are rejected
-#define MIN_IR_DC 20000.0f    // Weak DC means finger is not on sensor
-#define MIN_IR_AC 100.0f      // Weak AC means no detectable pulse
+#define MIN_IR_DC 5000.0f
+#define MIN_IR_AC 20.0f
 
 MAX30105 sensor;
 
@@ -164,6 +165,12 @@ void process_window() {
   float ir_dc = mean_u32(&ir_raw_buf[start_idx_trim], Nt);
   float ir_ac = 0.5f * (max_float(&ir_filt[start_idx_trim], Nt) - min_float(&ir_filt[start_idx_trim], Nt));
 
+#if PPG_SERIAL
+  Serial.print("ir_dc: "); Serial.print(ir_dc);
+  Serial.print(" ir_ac: "); Serial.print(ir_ac);
+  Serial.print(" ir_dc_full: "); Serial.println(ir_dc_full);
+#endif
+
   // Reject windows with weak or absent PPG signal
   if (ir_dc < MIN_IR_DC || ir_ac < MIN_IR_AC || ir_dc_full < MIN_IR_DC) {
     send_result(NAN, NAN);
@@ -209,6 +216,11 @@ void process_window() {
   }
 
   send_result(hr_est, spo2_est);
+
+  for (int i = 0; i < n_peaks; i++) {
+    uint32_t foot_ts = ppg_ts - (uint32_t)((float)(N_SAMPLES - start_idx_trim - peak_locs[i]) * (1000.0f / FS_HZ));
+    bcg_compute_pat(foot_ts, hr_est);
+  }
 }
 
 void ppg_setup() {
@@ -217,7 +229,7 @@ void ppg_setup() {
   }
 
   sensor.setup(
-    60,              // LED brightness (0–255)
+    60,             // LED brightness (0–255)
     1,               // sampleAverage — 1 means no averaging, true FS_HZ into FIFO
     2,               // ledMode — 2 = red + IR (required for SpO2)
     (int)FS_HZ,      // sampleRate (Hz) — driven by FS_HZ defined above
@@ -234,12 +246,12 @@ void handle_ppg() {
     uint32_t ir_raw  = sensor.getFIFOIR();
     uint32_t red_raw = sensor.getFIFORed();
 
-#if PPG_SERIAL
-    // Print raw samples: ir,red
-    Serial.print(ir_raw);
-    Serial.print(",");
-    Serial.println(red_raw);
-#endif
+// #if PPG_SERIAL
+//     // Print raw samples: ir,red
+//     Serial.print(ir_raw);
+//     Serial.print(",");
+//     Serial.println(red_raw);
+// #endif
 
     ir_raw_buf[sample_idx]  = ir_raw;
     red_raw_buf[sample_idx] = red_raw;

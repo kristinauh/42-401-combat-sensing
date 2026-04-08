@@ -2,6 +2,7 @@
 // Respiratory rate estimation from chest-worn IMU accelerometer (y-axis)
 // Method: 1st order Butterworth bandpass 0.1–0.7 Hz -> peak counting over 25s window
 // Based on: Romano et al. (2022), Biosensors 12, 834
+// https://doi.org/10.3390/bios12100834
 
 #include "defines.h"
 

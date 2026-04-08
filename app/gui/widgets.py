@@ -395,11 +395,12 @@ class SoldierCard(QFrame):
             }}
         """)
 
-    def set_values(self, hr_text, hr_zone_text, spo2_text, rr_text, condition_text, link_text, last_move_text, vbat_text, vbat_color=None):
+    def set_values(self, hr_text, hr_zone_text, spo2_text, rr_text, bp_text, condition_text, link_text, last_move_text, vbat_text, vbat_color=None):
         # Update all displayed values — called by refresh_ui_elements in triage_gui
         self.hr_box.value_label.setText(hr_text)
         self.spo2_box.value_label.setText(spo2_text)
         self.rr_box.value_label.setText(f"{rr_text} BrPM" if rr_text != "--" else "--")
+        self.bp_box.value_label.setText(bp_text)
         self.hr_zone_row["right"].setText(hr_zone_text)
         self.condition_row["right"].setText(condition_text)
         self.link_row["right"].setText(link_text)

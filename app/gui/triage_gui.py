@@ -310,6 +310,8 @@ class DashboardWindow(QMainWindow):
             "fall_detected_since": None,  # Timestamp when a confirmed fall was first seen
             "vbat": None,                 # Battery voltage in volts, None until first reading arrives
             "rr": None,
+            "sbp": None,
+            "dbp": None,
         }
 
     def rebuild_device_mapping(self):
@@ -596,7 +598,7 @@ class DashboardWindow(QMainWindow):
     
     def get_battery_display(self, vbat_val):
         if vbat_val is None:
-            return "🔋 --", TEXT_DIM
+            return "--", TEXT_DIM
         
         pct = max(0, min(100, int((vbat_val - 3.0) / (4.2 - 3.0) * 100)))
         
@@ -637,6 +639,9 @@ class DashboardWindow(QMainWindow):
             hr_zone_text = calculate_hr_zone(age_val, hr_val)
             vbat_val = state.get("vbat")
             rr_val = state.get("rr")
+            sbp_val = state.get("sbp")
+            dbp_val = state.get("dbp")
+            bp_text = "--/--" if (sbp_val is None or dbp_val is None) else f"{sbp_val:.0f}/{dbp_val:.0f}"
             rr_text = "--" if rr_val is None else f"{rr_val:.0f}"
 
             vbat_text, vbat_color = self.get_battery_display(vbat_val)
@@ -646,6 +651,7 @@ class DashboardWindow(QMainWindow):
                 hr_zone_text,
                 "--%" if spo2_val is None else f"{spo2_val}%",
                 rr_text,
+                bp_text,
                 motion_text,
                 link_text,
                 f"{last_move_sec}s ago",
@@ -692,6 +698,8 @@ class DashboardWindow(QMainWindow):
         link_status="ACTIVE",
         vbat=None,
         rr=None,
+        sbp=None,
+        dbp=None,
     ):
         if not device_id:
             return
@@ -713,6 +721,10 @@ class DashboardWindow(QMainWindow):
             updates["vbat"] = vbat
         if rr is not None:
             updates["rr"] = rr
+        if sbp is not None:
+            updates["sbp"] = sbp
+        if dbp is not None:
+            updates["dbp"] = dbp
         
         self.update_soldier_data(soldier_id, **updates)
         self.refresh_ui_elements()
