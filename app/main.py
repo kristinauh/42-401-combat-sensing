@@ -37,6 +37,8 @@ class BLEBridge(QObject):
     ppg_received = Signal(str, object, object)  # device_id, hr, spo2
     imu_received = Signal(str, str)             # device_id, motion_state
     bat_received = Signal(str, float)           # device_id, vbat
+    rr_received = Signal(str, float)
+    bp_received = Signal(str, object, object)  # device_id, sbp, dbp
     link_changed = Signal(str, str)             # device_id, "ACTIVE" | "LOST"
 
 
@@ -79,6 +81,17 @@ class BLEBackend:
                 _, ts, vbat = decoded
                 print(f"[BLE RX][BAT] vbat={vbat:.2f} V")
                 self.bridge.bat_received.emit(DEVICE_ID, vbat)
+            
+            elif ptype == "W":
+                _, ts, rr = decoded
+                if rr is not None:
+                    print(f"[BLE RX][RR] rr={rr:.1f} BrPM")
+                    self.bridge.rr_received.emit(DEVICE_ID, rr)
+
+            elif ptype == "P":
+                _, ts, sbp, dbp = decoded
+                print(f"[BLE RX][BP] sbp={sbp} mmHg dbp={dbp} mmHg")
+                self.bridge.bp_received.emit(DEVICE_ID, sbp, dbp)
 
     async def _run(self):
         await run_ble(
@@ -122,6 +135,19 @@ def main():
         lambda device_id, vbat: window.handle_incoming_packet(
             device_id=device_id,
             vbat=vbat,
+        )
+    )
+    bridge.rr_received.connect(
+        lambda device_id, rr: window.handle_incoming_packet(
+            device_id=device_id,
+            rr=rr,
+        )
+    )
+    bridge.bp_received.connect(
+        lambda device_id, sbp, dbp: window.handle_incoming_packet(
+            device_id=device_id,
+            sbp=sbp,
+            dbp=dbp,
         )
     )
     bridge.link_changed.connect(

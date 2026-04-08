@@ -54,7 +54,6 @@ SPO2_CRITICAL_THRESHOLD = 90      # SpO2 below this → CRITICAL after delay
 SPO2_ALERT_DURATION_SEC = 30      # How long SpO2 must be low before flagging
 FALL_CRITICAL_DURATION_SEC = 60   # Seconds person must be still after fall → CRITICAL
 
-
 class DashboardWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -86,6 +85,7 @@ class DashboardWindow(QMainWindow):
         self.card_widgets: Dict[str, SoldierCard] = {}      # soldier_id → card widget
         self.selected_ids: List[str] = []                   # currently displayed soldier IDs
         self.live_pulse_on = True                           # toggled each refresh for pulse animation
+        self.last_battery_pct = None
 
         self._build_ui()
         self._apply_styles()
@@ -300,15 +300,18 @@ class DashboardWindow(QMainWindow):
     def make_default_state(self):
         # Used when a soldier is added before any BLE data has arrived
         return {
-            "hr": 70,
-            "spo2": 98,
-            "motion_state": "IDLE_FALL",
+            "hr": None,
+            "spo2": None,
+            "motion_state": None,
             "fall_detected": False,
             "last_motion_time": time.time(),
             "data_link_status": "ACTIVE",
             "spo2_low_since": None,       # Timestamp when SpO2 first dropped below monitor threshold
             "fall_detected_since": None,  # Timestamp when a confirmed fall was first seen
-            "vbat": None,  # Battery voltage in volts, None until first reading arrives
+            "vbat": None,                 # Battery voltage in volts, None until first reading arrives
+            "rr": None,
+            "sbp": None,
+            "dbp": None,
         }
 
     def rebuild_device_mapping(self):
@@ -557,8 +560,8 @@ class DashboardWindow(QMainWindow):
         self.render_cards()
 
     def get_status_for_state(self, state):
-        spo2 = state.get("spo2", 100)
-        motion = state.get("motion_state", "")
+        spo2 = state.get("spo2") or 100
+        motion = state.get("motion_state") or ""
         link = state.get("data_link_status", "ACTIVE")
         spo2_low_since = state.get("spo2_low_since")
         fall_detected_since = state.get("fall_detected_since")
@@ -592,7 +595,30 @@ class DashboardWindow(QMainWindow):
 
         # All active motion states are stable — person is moving normally
         return "STABLE", "STABLE"
-
+    
+    def get_battery_display(self, vbat_val):
+        if vbat_val is None:
+            return "--", TEXT_DIM
+        
+        pct = max(0, min(100, int((vbat_val - 3.0) / (4.2 - 3.0) * 100)))
+        
+        if self.last_battery_pct is None:
+            self.last_battery_pct = pct
+        else:
+            self.last_battery_pct = int(0.8 * self.last_battery_pct + 0.2 * pct)
+        
+        p = self.last_battery_pct
+        if p > 75:
+            return "█████", "#4caf50"        # full
+        elif p > 50:
+            return "████░", "#8bc34a"        # good
+        elif p > 25:
+            return "███░░", "#f5a623"   # medium — orange
+        elif p > 10:
+            return "██░░░", "#e05252"   # low — red
+        else:
+            return "█░░░░", "#e05252"   # critical — red
+    
     def refresh_ui_elements(self):
         # Toggle pulse dot color each call to create a blinking animation
         self.live_pulse_on = not self.live_pulse_on
@@ -612,21 +638,25 @@ class DashboardWindow(QMainWindow):
             age_val = info.age if info else None
             hr_zone_text = calculate_hr_zone(age_val, hr_val)
             vbat_val = state.get("vbat")
-            if vbat_val is None:
-                vbat_text = "--"
-            else:
-                # Linear approximation of LiPo charge level: 2.0V = 0%, 3.4V = 100%
-                pct = max(0, min(100, int((vbat_val - 2.0) / (3.4 - 2.0) * 100)))
-                vbat_text = f"{pct}%"
+            rr_val = state.get("rr")
+            sbp_val = state.get("sbp")
+            dbp_val = state.get("dbp")
+            bp_text = "--/--" if (sbp_val is None or dbp_val is None) else f"{sbp_val:.0f}/{dbp_val:.0f}"
+            rr_text = "--" if rr_val is None else f"{rr_val:.0f}"
+
+            vbat_text, vbat_color = self.get_battery_display(vbat_val)
 
             card.set_values(
-                "-- bpm" if hr_val == "--" else f"{hr_val} bpm",
+                "-- bpm" if hr_val is None else f"{hr_val} bpm",
                 hr_zone_text,
-                "--%" if spo2_val == "--" else f"{spo2_val}%",
+                "--%" if spo2_val is None else f"{spo2_val}%",
+                rr_text,
+                bp_text,
                 motion_text,
                 link_text,
                 f"{last_move_sec}s ago",
                 vbat_text,
+                vbat_color,
             )
             card.set_hero_alerts(hr_val, spo2_val)
             card.set_status(status_text, status_kind)
@@ -645,7 +675,7 @@ class DashboardWindow(QMainWindow):
 
         # Track how long SpO2 has been below the monitor threshold
         spo2 = state.get("spo2", 100)
-        if spo2 < SPO2_MONITOR_THRESHOLD:
+        if spo2 is not None and spo2 < SPO2_MONITOR_THRESHOLD:
             if state.get("spo2_low_since") is None:
                 state["spo2_low_since"] = time.time()
         else:
@@ -653,7 +683,7 @@ class DashboardWindow(QMainWindow):
 
         # Track how long since a confirmed fall was first detected
         motion = state.get("motion_state", "")
-        if motion in ("DETECTED_FALL", "STATIONARY_POST_FALL"):
+        if motion and motion in ("DETECTED_FALL", "STATIONARY_POST_FALL"):
             if state.get("fall_detected_since") is None:
                 state["fall_detected_since"] = time.time()
         else:
@@ -667,6 +697,9 @@ class DashboardWindow(QMainWindow):
         motion_state=None,
         link_status="ACTIVE",
         vbat=None,
+        rr=None,
+        sbp=None,
+        dbp=None,
     ):
         if not device_id:
             return
@@ -686,6 +719,12 @@ class DashboardWindow(QMainWindow):
             updates["fall_detected"] = (motion_state in ("DETECTED_FALL", "STATIONARY_POST_FALL"))
         if vbat is not None:
             updates["vbat"] = vbat
+        if rr is not None:
+            updates["rr"] = rr
+        if sbp is not None:
+            updates["sbp"] = sbp
+        if dbp is not None:
+            updates["dbp"] = dbp
         
         self.update_soldier_data(soldier_id, **updates)
         self.refresh_ui_elements()

@@ -14,19 +14,19 @@ TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 # (activity label, duration in seconds, instruction shown to experimenter)
 PROTOCOL_STEPS = [
-    ("PPG_WARMUP",     20, "Stand still. Do not move."),
+    ("PPG_WARMUP",     10, "Stand still. Do not move."),
     ("BASELINE_STILL", 30, "Stand still."),
     ("WALK_SLOW",      30, "Walk at a comfortable, relaxed pace."),
     ("WALK_FAST",      30, "Walk briskly."),
     ("RECOVERY_STILL", 30, "Stand still."),
-    ("RUN",            30, "Run in place or jog."),
+    ("RUN",            60, "Run in place or jog."),
     ("RECOVERY_STILL", 30, "Stand still."),
     ("JUMP_SINGLE",    30, "Perform one jump, then stand still."),
     ("JUMP_REPEATED",  30, "Jump repeatedly at roughly one jump per second."),
     ("RECOVERY_STILL", 30, "Stand still."),
-    ("FALL_FORWARD",   30, "Controlled forward fall. Lie still for 15s after impact."),
-    ("FALL_BACKWARD",  30, "Controlled backward fall. Lie still for 15s after impact."),
-    ("FALL_SIDE",      30, "Controlled side fall. Lie still for 15s after impact."),
+    ("FALL_FORWARD",   30, "Controlled forward fall. Lie still after impact."),
+    ("FALL_BACKWARD",  30, "Controlled backward fall. Lie still after impact."),
+    ("FALL_SIDE",      30, "Controlled side fall. Lie still after impact."),
     ("SIT_QUICK",      30, "Sit down quickly from standing, then remain seated."),
 ]
 
@@ -39,7 +39,10 @@ STATE_NAMES = {
     4: "STATIONARY_POST_FALL",
     5: "WALKING",
     6: "RUNNING",
-    7: "JUMPING_OR_QUICK_SIT",
+    7: "JUMPING",
+    8: "LIMPING",
+    9: "SITTING",
+    10: "SQUATTING",
 }
 
 FIELDNAMES = [

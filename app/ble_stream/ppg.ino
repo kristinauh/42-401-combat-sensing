@@ -1,4 +1,7 @@
+// ppg.ino
+
 #include <MAX30105.h>
+#include "defines.h"
 
 // PPG settings
 #define FS_HZ 100.0f          // Sampling rate (Hz) — must match sampleRate below
@@ -11,8 +14,8 @@
 #define SPO2_B 4.7242f
 
 // Minimum signal quality thresholds — windows below these are rejected
-#define MIN_IR_DC 20000.0f    // Weak DC means finger is not on sensor
-#define MIN_IR_AC 100.0f      // Weak AC means no detectable pulse
+#define MIN_IR_DC 5000.0f
+#define MIN_IR_AC 20.0f
 
 MAX30105 sensor;
 
@@ -97,10 +100,11 @@ int find_peaks(const float *x, int n, int min_peak_dist, int *locs) {
 // R packet: ts(uint32), hr(int16 x100), spo2(int16 x100)
 // Values are scaled by 100 to avoid floats over BLE; -1 signals invalid/no reading
 void send_result(float hr, float spo2) {
-#if DEBUG_SERIAL
+#if PPG_SERIAL
   // hr and spo2 are computed per-window, not per-sample, so print once per window
   Serial.print("PPG hr: "); Serial.print(hr); Serial.print(", spo2: "); Serial.println(spo2);
-#else
+#endif
+
   if (!Bluefruit.connected()) return;
 
   int16_t hr_i = isnan(hr) ? -1 : (int16_t)lroundf(hr * 100.0f);
@@ -113,7 +117,6 @@ void send_result(float hr, float spo2) {
   memcpy(&pkt[7], &spo2_i, 2);
 
   bleuart.write(pkt, sizeof(pkt));
-#endif
 }
 
 void process_window() {
@@ -162,6 +165,12 @@ void process_window() {
   float ir_dc = mean_u32(&ir_raw_buf[start_idx_trim], Nt);
   float ir_ac = 0.5f * (max_float(&ir_filt[start_idx_trim], Nt) - min_float(&ir_filt[start_idx_trim], Nt));
 
+#if PPG_SERIAL
+  Serial.print("ir_dc: "); Serial.print(ir_dc);
+  Serial.print(" ir_ac: "); Serial.print(ir_ac);
+  Serial.print(" ir_dc_full: "); Serial.println(ir_dc_full);
+#endif
+
   // Reject windows with weak or absent PPG signal
   if (ir_dc < MIN_IR_DC || ir_ac < MIN_IR_AC || ir_dc_full < MIN_IR_DC) {
     send_result(NAN, NAN);
@@ -173,7 +182,7 @@ void process_window() {
     ir_norm[i] = ir_filt[i] / ir_std;
   }
 
-  // Minimum 0.4s between peaks — rejects anything faster than 200 bpm
+  // Minimum 0.3s between peaks — rejects anything faster than 200 bpm
   int min_peak_dist = (int)roundf(FS_HZ * 0.3f);
   if (min_peak_dist > Nt - 2) min_peak_dist = Nt - 2;
   if (min_peak_dist < 1) {
@@ -207,6 +216,11 @@ void process_window() {
   }
 
   send_result(hr_est, spo2_est);
+
+  for (int i = 0; i < n_peaks; i++) {
+    uint32_t foot_ts = ppg_ts - (uint32_t)((float)(N_SAMPLES - start_idx_trim - peak_locs[i]) * (1000.0f / FS_HZ));
+    bcg_compute_pat(foot_ts, hr_est);
+  }
 }
 
 void ppg_setup() {
@@ -215,12 +229,12 @@ void ppg_setup() {
   }
 
   sensor.setup(
-    60,    // LED brightness (0–255)
-    1,     // sampleAverage — 1 means no averaging, true 100 Hz into FIFO
-    2,     // ledMode — 2 = red + IR (required for SpO2)
-    100,   // sampleRate (Hz) — must match FS_HZ
-    411,   // pulseWidth (µs) — longer = more ADC bits, higher SNR
-    4096   // adcRange — maximum range for high-perfusion signals
+    60,             // LED brightness (0–255)
+    1,               // sampleAverage — 1 means no averaging, true FS_HZ into FIFO
+    2,               // ledMode — 2 = red + IR (required for SpO2)
+    (int)FS_HZ,      // sampleRate (Hz) — driven by FS_HZ defined above
+    411,             // pulseWidth (µs) — longer = more ADC bits, higher SNR
+    4096             // adcRange — maximum range for high-perfusion signals
   );
 }
 
@@ -232,12 +246,12 @@ void handle_ppg() {
     uint32_t ir_raw  = sensor.getFIFOIR();
     uint32_t red_raw = sensor.getFIFORed();
 
-#if DEBUG_SERIAL
-    // Print raw samples in the same format as ppg_serial_stream.ino
-    Serial.print(ir_raw);
-    Serial.print(",");
-    Serial.println(red_raw);
-#endif
+// #if PPG_SERIAL
+//     // Print raw samples: ir,red
+//     Serial.print(ir_raw);
+//     Serial.print(",");
+//     Serial.println(red_raw);
+// #endif
 
     ir_raw_buf[sample_idx]  = ir_raw;
     red_raw_buf[sample_idx] = red_raw;

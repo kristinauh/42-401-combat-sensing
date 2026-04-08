@@ -1,170 +1,7 @@
+//imu.ino
+
 #include "LSM6DS3.h"
-
-BLEUart bleuart;
-MAX30105 sensor;
-LSM6DS3 myIMU(I2C_MODE, 0x6A);
-
-#define ENABLE_SERIAL_TEST 1
-#define DEBUG_IMU 0
-
-// PPG settings
-#define FS_HZ 100.0f          // Sampling rate (Hz) — must match sampleRate below
-#define WINDOW_SEC 5.0f       // PPG processing window length
-#define N_SAMPLES 500         // Samples per window: FS_HZ * WINDOW_SEC
-#define TRIM_SEC 0.13f        // Ignore initial unstable portion of each window
-
-// SpO2 fit: SpO2 = A - B*R
-#define SPO2_A 99.6061f
-#define SPO2_B 4.7242f
-
-// Minimum signal quality thresholds — windows below these are rejected
-#define MIN_IR_DC 20000.0f    // Weak DC means finger is not on sensor
-#define MIN_IR_AC 100.0f      // Weak AC means no detectable pulse
-
-uint32_t ir_raw_buf[N_SAMPLES];
-uint32_t red_raw_buf[N_SAMPLES];
-
-float ir0[N_SAMPLES];
-float red0[N_SAMPLES];
-float ir_filt[N_SAMPLES];
-float red_filt[N_SAMPLES];
-float ir_norm[N_SAMPLES];
-float scratch1[N_SAMPLES];   // Reusable scratch buffers for filtfilt passes
-float scratch2[N_SAMPLES];
-int peak_locs[N_SAMPLES];
-
-int sample_idx = 0;
-uint32_t window_counter = 0;
-uint32_t ppg_ts = 0;         // Wall-clock time captured when each window completes
-
-// IMU constants
-const float G = 9.81f;
-const float RAD_TO_DEG_CONV = 57.295779f;
-
-#define LOOP_DELAY 10         // IMU update period in ms (100 Hz)
-
-#define BUF_SIZE 200          // Circular buffer depth — covers ~2s of IMU data at 100 Hz
-#define IDLE_TRIGGER 0.8      // A_SVM below this suggests free-fall onset
-#define CHECK_TRIGGER 1.4     // A_SVM above this during CHECK_FALL suggests impact
-
-// Std-dev thresholds used to classify post-impact motion
-#define ACCEL_DEV_THRESHOLD 0.08
-#define GYRO_DEV_THRESHOLD 17.1
-#define DEV_BUFFER_SIZE 50    // Number of samples evaluated for std-dev check
-
-#define ACCEL_DEV_WALKING 0.13
-#define ACCEL_DEV_RUNNING 0.702
-#define ASVM_RUN_WALK_THRESHOLD 2.6
-#define BUF_SMALL 50          // Short window used for stationary and posture checks
-
-#define TILT_TRIGGER 30       // Degrees of tilt change required to confirm a fall
-#define STATIONARY_THRESHOLD 0.15  // Max deviation from 1g to be considered stationary
-
-#define LIMP_SKEWNESS_THRESHOLD 1.5
-
-// Range-based thresholds for event scoring
-#define MIN_SCORE 3 // min number of range matches to classify an event
-
-// FALL
-#define FALL_ASVM_STD_LO    -0.0174f
-#define FALL_ASVM_STD_HI     0.1122f
-#define FALL_GSVM_STD_LO    -5.4818f
-#define FALL_GSVM_STD_HI    25.9585f
-#define FALL_MAX_ASVM_LO     2.2048f
-#define FALL_MAX_ASVM_HI     9.0501f
-#define FALL_MIN_ASVM_LO     0.3046f
-#define FALL_MIN_ASVM_HI     0.7059f
-#define FALL_TILT_DIFF_LO   13.8784f
-#define FALL_TILT_DIFF_HI   88.4487f
-#define FALL_SKEWNESS_LO     1.4838f
-#define FALL_SKEWNESS_HI     4.6622f
-
-// LIMP
-#define LIMP_ASVM_STD_LO     0.0662f
-#define LIMP_ASVM_STD_HI     0.4648f
-#define LIMP_GSVM_STD_LO     5.8598f
-#define LIMP_GSVM_STD_HI    22.4971f
-#define LIMP_MAX_ASVM_LO     1.8062f
-#define LIMP_MAX_ASVM_HI     3.0036f
-#define LIMP_MIN_ASVM_LO     0.2952f
-#define LIMP_MIN_ASVM_HI     0.6898f
-#define LIMP_TILT_DIFF_LO   -0.2081f
-#define LIMP_TILT_DIFF_HI   15.7581f
-#define LIMP_SKEWNESS_LO     1.1049f
-#define LIMP_SKEWNESS_HI     2.4283f
-
-// RUN
-#define RUN_ASVM_STD_LO      0.3217f
-#define RUN_ASVM_STD_HI      1.6061f
-#define RUN_GSVM_STD_LO      7.0514f
-#define RUN_GSVM_STD_HI    100.2226f
-#define RUN_MAX_ASVM_LO      3.2098f
-#define RUN_MAX_ASVM_HI      7.8539f
-#define RUN_MIN_ASVM_LO     -0.0099f
-#define RUN_MIN_ASVM_HI      0.2158f
-#define RUN_TILT_DIFF_LO     2.6980f
-#define RUN_TILT_DIFF_HI    52.1412f
-#define RUN_SKEWNESS_LO      0.9297f
-#define RUN_SKEWNESS_HI      4.7800f
-
-// WALK
-#define WALK_ASVM_STD_LO     0.0939f
-#define WALK_ASVM_STD_HI     0.3622f
-#define WALK_GSVM_STD_LO     9.3677f
-#define WALK_GSVM_STD_HI    32.5926f
-#define WALK_MAX_ASVM_LO     1.4242f
-#define WALK_MAX_ASVM_HI     2.0116f
-#define WALK_MIN_ASVM_LO     0.3105f
-#define WALK_MIN_ASVM_HI     0.7612f
-#define WALK_TILT_DIFF_LO   -2.7011f
-#define WALK_TILT_DIFF_HI   11.5852f
-#define WALK_SKEWNESS_LO     0.7277f
-#define WALK_SKEWNESS_HI     1.9725f
-
-// JUMP
-#define JUMP_ASVM_STD_LO    -0.5109f
-#define JUMP_ASVM_STD_HI     1.1051f
-#define JUMP_GSVM_STD_LO    -6.7328f
-#define JUMP_GSVM_STD_HI    37.1204f
-#define JUMP_MAX_ASVM_LO     3.5655f
-#define JUMP_MAX_ASVM_HI     7.7131f
-#define JUMP_MIN_ASVM_LO     0.0358f
-#define JUMP_MIN_ASVM_HI     0.1124f
-#define JUMP_TILT_DIFF_LO   -6.3122f
-#define JUMP_TILT_DIFF_HI   79.3750f
-#define JUMP_SKEWNESS_LO     0.5459f
-#define JUMP_SKEWNESS_HI     3.8936f
-
-// SIT
-#define SIT_ASVM_STD_LO     -0.0011f
-#define SIT_ASVM_STD_HI      0.0334f
-#define SIT_GSVM_STD_LO      0.7608f
-#define SIT_GSVM_STD_HI      3.3579f
-#define SIT_MAX_ASVM_LO      1.0226f
-#define SIT_MAX_ASVM_HI      4.1145f
-#define SIT_MIN_ASVM_LO      0.1256f
-#define SIT_MIN_ASVM_HI      0.5739f
-#define SIT_TILT_DIFF_LO     1.7556f
-#define SIT_TILT_DIFF_HI    20.4851f
-#define SIT_SKEWNESS_LO      1.1826f
-#define SIT_SKEWNESS_HI      1.6645f
-
-// SQUAT
-#define SQUAT_ASVM_STD_LO   -0.1059f
-#define SQUAT_ASVM_STD_HI    0.4536f
-#define SQUAT_GSVM_STD_LO   -7.4134f
-#define SQUAT_GSVM_STD_HI   38.1835f
-#define SQUAT_MAX_ASVM_LO    1.1479f
-#define SQUAT_MAX_ASVM_HI    2.8265f
-#define SQUAT_MIN_ASVM_LO    0.0823f
-#define SQUAT_MIN_ASVM_HI    0.5547f
-#define SQUAT_TILT_DIFF_LO  -1.8043f
-#define SQUAT_TILT_DIFF_HI  16.1746f
-#define SQUAT_SKEWNESS_LO    0.8107f
-#define SQUAT_SKEWNESS_HI    1.5118f
-
 #include "defines.h"
-
 
 // IMU calibration offsets — measured at rest, subtracted from raw readings
 double cal_gx = 1.101100;
@@ -325,7 +162,6 @@ float posture_check() {
 
   float tilt_diff = fabsf(avg_final - avg_init);
   cv.fall_event_val = tilt_diff;
-  // return (tilt_diff >= TILT_TRIGGER);
   return tilt_diff;
 }
 
@@ -496,15 +332,15 @@ FALL_STATES analyze_event_score() {
     scores[5] = score_sit(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
     scores[6] = score_squat(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
 
-    if(DEBUG_IMU) {
-      Serial.print("fall  score: "); Serial.print(scores[0]);
-      Serial.print("; limp  score: "); Serial.print(scores[1]); 
-      Serial.print("; run   score: "); Serial.print(scores[2]); 
-      Serial.print("; walk  score: "); Serial.print(scores[3]); 
-      Serial.print("; jump  score: "); Serial.print(scores[4]); 
-      Serial.print("; sit   score: "); Serial.print(scores[5]); 
-      Serial.print("; squat score: "); Serial.println(scores[6]);
-    }
+#if IMU_SERIAL
+    Serial.print("fall  score: "); Serial.print(scores[0]);
+    Serial.print("; limp  score: "); Serial.print(scores[1]);
+    Serial.print("; run   score: "); Serial.print(scores[2]);
+    Serial.print("; walk  score: "); Serial.print(scores[3]);
+    Serial.print("; jump  score: "); Serial.print(scores[4]);
+    Serial.print("; sit   score: "); Serial.print(scores[5]);
+    Serial.print("; squat score: "); Serial.println(scores[6]);
+#endif
 
     int high_score_idx = -1;
     int high_score = 0;
@@ -517,11 +353,12 @@ FALL_STATES analyze_event_score() {
             high_score_idx = i;
         }
     }
-    if(DEBUG_IMU) {
-      Serial.print("High score index: "); Serial.println(high_score_idx);
-    }
 
-    // require fall detection to include angle change to avoid hella false positives from priority ranking
+#if IMU_SERIAL
+    Serial.print("high score index: "); Serial.println(high_score_idx);
+#endif
+
+    // require fall detection to include angle change to avoid false positives from priority ranking
     if(high_score_idx == 0) {
       // discriminate based on angle only
       if(angle_diff >= TILT_TRIGGER) {
@@ -560,55 +397,48 @@ FALL_STATES analyze_event_score() {
 // M packet: ts(uint32), state(uint8), event_val(int16 x100), impact(int16 x100)
 void send_motion_packet() {
   if (!Bluefruit.connected()) return;
-    uint8_t pkt[10];
-    pkt[0] = 'M';
 
-    uint32_t ts = cv.curr_time;
-    int16_t event_i = (int16_t)lroundf(cv.fall_event_val * 100.0f);
-    int16_t impact_i = (int16_t)lroundf(cv.fall_impact * 100.0f);
-    uint8_t state_i = (uint8_t)fall_state;
+  uint8_t pkt[10];
+  pkt[0] = 'M';
 
-    memcpy(&pkt[1], &ts, 4);
-    pkt[5] = state_i;
-    memcpy(&pkt[6], &event_i, 2);
-    memcpy(&pkt[8], &impact_i, 2);
+  uint32_t ts = cv.curr_time;
+  int16_t event_i = (int16_t)lroundf(cv.fall_event_val * 100.0f);
+  int16_t impact_i = (int16_t)lroundf(cv.fall_impact * 100.0f);
+  uint8_t state_i = (uint8_t)fall_state;
 
-    bleuart.write(pkt, sizeof(pkt));
+  memcpy(&pkt[1], &ts, 4);
+  pkt[5] = state_i;
+  memcpy(&pkt[6], &event_i, 2);
+  memcpy(&pkt[8], &impact_i, 2);
+
+  bleuart.write(pkt, sizeof(pkt));
 }
 
-// send all data points for external analysis
+// Send all data points over serial for external analysis
 void send_motion_packet_serial() {
-  if(ENABLE_SERIAL_TEST) {
-    // also don't print every line if debugging
-    if(DEBUG_IMU && ((fall_state != IDLE_FALL) || (fall_state != CHECK_FALL) || (fall_state != STATIONARY_POST_FALL))) {
-      return;
-    }
-    char buffer[160];
+#if !IMU_SERIAL
+  return;
+#endif
 
-    // send accel values
-    snprintf(buffer, sizeof(buffer),
-            "%.3f,%.3f,%.3f",
-            cv.ax, cv.ay, cv.az);
-    Serial.print(buffer);
+  char buffer[160];
 
-    // send gyro values
-    snprintf(buffer, sizeof(buffer),
-            ",%.3f,%.3f,%.3f",
-            cv.gx, cv.gy, cv.gz);
-    Serial.print(buffer);
+  // send accel values
+  snprintf(buffer, sizeof(buffer), "%.3f,%.3f,%.3f", cv.ax, cv.ay, cv.az);
+  Serial.print(buffer);
 
-    // send svm values
-    snprintf(buffer, sizeof(buffer),
-            ",%.3f,%.3f",
-            cv.A_SVM, cv.G_SVM);
-    Serial.print(buffer);
-      // send time and fall_event values
-    snprintf(buffer, sizeof(buffer),
-            ",%.lu,%.3f,",
-            cv.delta_time, cv.fall_event_val);
-    Serial.print(buffer);
-    Serial.println(fall_state_strings[fall_state]);
-  }
+  // send gyro values
+  snprintf(buffer, sizeof(buffer), ",%.3f,%.3f,%.3f", cv.gx, cv.gy, cv.gz);
+  Serial.print(buffer);
+
+  // send svm values
+  snprintf(buffer, sizeof(buffer), ",%.3f,%.3f", cv.A_SVM, cv.G_SVM);
+  Serial.print(buffer);
+
+  // send time and fall_event values
+  snprintf(buffer, sizeof(buffer), ",%lu,%.3f,", cv.delta_time, cv.fall_event_val);
+  Serial.print(buffer);
+
+  Serial.println(fall_state_strings[fall_state]);
 }
 
 // Fills the event buffer one tick at a time after a low-accel trigger
@@ -616,6 +446,7 @@ void send_motion_packet_serial() {
 void handle_check_fall_tick() {
   update_values(true); // save values to the buffer now
   send_motion_packet_serial();
+
   if (cv.A_SVM >= CHECK_TRIGGER) {
     if (!check_fall_large_accel) check_pos = check_fall_count;  // Mark where impact started
     check_fall_large_accel = true;
@@ -670,6 +501,9 @@ void imu_setup() {
 
 // Run strictly once per tick
 void handle_imu() {
+  rr_update(cv.ax);
+  bcg_update(cv.ax);
+
   switch (fall_state) {
     case IDLE_FALL:
       update_values(false);  // No buffering needed — just watching for trigger
@@ -695,29 +529,6 @@ void handle_imu() {
       break;
 
     case ANALYZE_IMPACT: {
-      // float std_accel = std_dev_check(ACCEL, BUF_SIZE);
-      // float std_gyro = std_dev_check(GYRO, BUF_SIZE);
-      // bool fall_tilt_check = posture_check();
-
-      // // Classify the event based on post-impact motion signature
-      // bool stabilized_dev = (std_accel <= ACCEL_DEV_THRESHOLD) &&
-      //                       (std_gyro <= GYRO_DEV_THRESHOLD);
-      // bool walking_dev = (std_accel >= ACCEL_DEV_WALKING) &&
-      //                    (std_accel <= ACCEL_DEV_RUNNING);
-      // bool running_dev = (std_accel >= ACCEL_DEV_RUNNING);
-      // bool running_accel = (cv.fall_impact >= ASVM_RUN_WALK_THRESHOLD);
-
-      // if (stabilized_dev && fall_tilt_check) {
-      //   fall_state = DETECTED_FALL;
-      // } else if (running_dev && !fall_tilt_check && running_accel) {
-      //   fall_state = RUNNING;
-      // } else if (walking_dev && !fall_tilt_check && !running_accel) {
-      //   fall_state = WALKING;
-      // } else if (stabilized_dev && !fall_tilt_check) {
-      //   fall_state = JUMPING_OR_QUICK_SIT;
-      // } else {
-      //   initialize_values();  // Unclassifiable — reset and wait
-      // }
       send_motion_packet_serial();
       fall_state = analyze_event_score();
       // reset values for next clock if going back to IDLE
@@ -754,53 +565,5 @@ void handle_imu() {
       send_motion_packet_serial();
       initialize_values(); // reset state for new detection window
       break;
-  }
-}
-
-void setup() {
-  Wire.begin();
-
-  Bluefruit.begin();
-  Bluefruit.setName("XIAO-SENSE");
-  bleuart.begin();
-  Bluefruit.Advertising.addService(bleuart);
-  Bluefruit.Advertising.addName();
-  Bluefruit.Advertising.start(0);  // 0 = advertise indefinitely
-
-  if (!sensor.begin(Wire, 400000)) {
-    while (1) {}  // Halt if sensor not found
-  }
-
-  sensor.setup(
-    60,    // LED brightness (0–255)
-    1,     // sampleAverage — 1 means no averaging, true 100 Hz into FIFO
-    2,     // ledMode — 2 = red + IR (required for SpO2)
-    100,   // sampleRate (Hz) — must match FS_HZ
-    411,   // pulseWidth (µs) — longer = more ADC bits, higher SNR
-    4096   // adcRange — maximum range for high-perfusion signals
-  );
-
-  if (myIMU.begin() != 0) {
-    while (1) {}  // Halt if IMU not found
-  }
-
-  initialize_values();
-  cv.curr_time = millis();
-  last_imu_ms = millis();
-  
-  if(ENABLE_SERIAL_TEST) {
-    Serial.begin(115200);
-    while(!Serial);
-  }
-}
-
-void loop() {
-  handle_ppg();
-
-  // Run IMU at fixed LOOP_DELAY interval without blocking PPG collection
-  uint32_t now = millis();
-  if ((uint32_t)(now - last_imu_ms) >= LOOP_DELAY) {
-    last_imu_ms += LOOP_DELAY;
-    handle_imu();
   }
 }
