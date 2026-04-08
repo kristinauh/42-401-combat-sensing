@@ -1,3 +1,5 @@
+//defines.h
+
 #pragma once
 
 // IMU constants
@@ -152,6 +154,8 @@ void handle_battery();
 void ppg_setup();
 void handle_ppg();
 void imu_setup();
+void rr_setup();
+void rr_update(float az);
 void handle_imu();
 extern uint32_t last_imu_ms;
 

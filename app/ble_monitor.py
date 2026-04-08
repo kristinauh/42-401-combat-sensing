@@ -77,6 +77,22 @@ class PacketParser:
 
                 decoded_packets.append(("B", ts, vbat))
 
+            # W packet: 'W' + ts(uint32) + rr(int16 x100)
+            elif ptype == "W":
+                pkt_len = 7
+                if len(self.buf) < pkt_len:
+                    break
+
+                pkt = bytes(self.buf[:pkt_len])
+                del self.buf[:pkt_len]
+
+                ts = struct.unpack_from("<I", pkt, 1)[0]
+                rr_i = struct.unpack_from("<h", pkt, 5)[0]
+
+                rr = None if rr_i < 0 else rr_i / 100.0
+
+                decoded_packets.append(("W", ts, rr))
+
             else:
                 # Skip one byte if buffer is misaligned or contains unknown data
                 bad = self.buf[0]
@@ -154,6 +170,17 @@ def handle_notification(sender: int, data: bytearray):
 
             print(f"[BLE RX][BAT] t={ts_rel:.0f}s vbat={vbat:.2f} V")
 
+        elif ptype == "W":
+            _, ts, rr = decoded
+
+            if t0 is None:
+                t0 = ts
+
+            ts_rel = (ts - t0) / 1000.0
+            rr_str = "---" if rr is None else f"{rr:.2f}"
+
+            print(f"[BLE RX][RR] t={ts_rel:.0f}s rr={rr_str} BrPM")
+            
         else:
             _, raw = decoded
             print(f"[BLE RX] Unknown packet type: {raw[0]} (raw={raw.hex()})")

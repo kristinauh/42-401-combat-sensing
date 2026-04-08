@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -209,7 +210,7 @@ class SoldierCard(QFrame):
         self.setObjectName("soldierCard")
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(220)
+        self.setMinimumHeight(280)
 
         self.root_layout = QVBoxLayout(self)
         self.root_layout.setContentsMargins(18, 18, 18, 18)
@@ -244,15 +245,19 @@ class SoldierCard(QFrame):
         self.root_layout.addWidget(divider)
 
         # Hero boxes: large HR and SpO2 values
-        self.hero_row = QHBoxLayout()
-        self.hero_row.setSpacing(12)
-
-        self.hr_box = self._make_hero_box("HR", "-- bpm")
+        self.hero_grid = QGridLayout()
+        self.hero_grid.setSpacing(8)
+        self.hr_box   = self._make_hero_box("HR", "-- bpm")
         self.spo2_box = self._make_hero_box("SpO2", "--%")
-
-        self.hero_row.addWidget(self.hr_box, 2)
-        self.hero_row.addWidget(self.spo2_box, 2)
-        self.root_layout.addLayout(self.hero_row)
+        self.rr_box   = self._make_hero_box("Resp", "-- BrPM")
+        self.bp_box   = self._make_hero_box("BP", "--/--")
+        self.hero_grid.addWidget(self.hr_box,   0, 0)
+        self.hero_grid.addWidget(self.spo2_box, 0, 1)
+        self.hero_grid.addWidget(self.rr_box,   1, 0)
+        self.hero_grid.addWidget(self.bp_box,   1, 1)
+        self.hero_grid.setColumnStretch(0, 1)
+        self.hero_grid.setColumnStretch(1, 1)
+        self.root_layout.addLayout(self.hero_grid)
 
         # Detail rows: HR zone, condition, link, last movement
         self.rows_container = QWidget()
@@ -274,6 +279,7 @@ class SoldierCard(QFrame):
         self.rows_layout.addWidget(self.vbat_row["container"])
 
         self.root_layout.addWidget(self.rows_container)
+        self.rows_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.root_layout.addStretch()
 
         self.apply_scale("group_3_4")
@@ -389,10 +395,11 @@ class SoldierCard(QFrame):
             }}
         """)
 
-    def set_values(self, hr_text, hr_zone_text, spo2_text, condition_text, link_text, last_move_text, vbat_text, vbat_color=None):
+    def set_values(self, hr_text, hr_zone_text, spo2_text, rr_text, condition_text, link_text, last_move_text, vbat_text, vbat_color=None):
         # Update all displayed values — called by refresh_ui_elements in triage_gui
         self.hr_box.value_label.setText(hr_text)
         self.spo2_box.value_label.setText(spo2_text)
+        self.rr_box.value_label.setText(f"{rr_text} BrPM" if rr_text != "--" else "--")
         self.hr_zone_row["right"].setText(hr_zone_text)
         self.condition_row["right"].setText(condition_text)
         self.link_row["right"].setText(link_text)
@@ -438,58 +445,60 @@ class SoldierCard(QFrame):
 
         self.hr_box.setStyleSheet(box_style.format(bg=hr_bg, border=hr_border))
         self.spo2_box.setStyleSheet(box_style.format(bg=spo2_bg, border=spo2_border))
+        self.rr_box.setStyleSheet(box_style.format(bg=HERO_BG, border=BORDER))
+        self.bp_box.setStyleSheet(box_style.format(bg=HERO_BG, border=BORDER))
 
     def apply_scale(self, scale_name: str):
         # Font sizes and spacing scale down as more cards are shown simultaneously
         # group_1 = 1 card (largest), group_5_8 = 5–8 cards (smallest)
         scales = {
-            "group_1": {
-                "sid": 30, "name": 16, "pill": 11,
-                "hero_small": 12, "hero_value": 30,
-                "detail_left": 17, "detail_right": 19,
-                "margins": (28, 28, 28, 28),
-                "spacing": 14,
-                "hero_min_h": 128,
-                "hero_gap": 14,
-                "rows_top": 18,
-                "rows_spacing": 18,
-                "row_min_h": 44,
-            },
-            "group_2": {
-                "sid": 24, "name": 13, "pill": 10,
-                "hero_small": 11, "hero_value": 24,
-                "detail_left": 15, "detail_right": 17,
-                "margins": (22, 22, 22, 22),
-                "spacing": 11,
-                "hero_min_h": 102,
-                "hero_gap": 12,
-                "rows_top": 15,
-                "rows_spacing": 15,
-                "row_min_h": 38,
-            },
+        "group_1": {
+            "sid": 30, "name": 16, "pill": 11,
+            "hero_small": 12, "hero_value": 30,
+            "detail_left": 17, "detail_right": 19,
+            "margins": (28, 28, 28, 28),
+            "spacing": 14,
+            "hero_min_h": 90,
+            "hero_gap": 14,
+            "rows_top": 12,
+            "rows_spacing": 12,
+            "row_min_h": 36,
+        },
+        "group_2": {
+            "sid": 24, "name": 13, "pill": 10,
+            "hero_small": 11, "hero_value": 24,
+            "detail_left": 15, "detail_right": 17,
+            "margins": (22, 22, 22, 22),
+            "spacing": 11,
+            "hero_min_h": 72,
+            "hero_gap": 12,
+            "rows_top": 10,
+            "rows_spacing": 10,
+            "row_min_h": 30,
+        },
             "group_3_4": {
                 "sid": 18, "name": 11, "pill": 9,
-                "hero_small": 9, "hero_value": 19,
-                "detail_left": 13, "detail_right": 14,
+                "hero_small": 9, "hero_value": 14,
+                "detail_left": 12, "detail_right": 13,
                 "margins": (12, 12, 12, 12),
-                "spacing": 6,
-                "hero_min_h": 65,
-                "hero_gap": 8,
-                "rows_top": 6,
-                "rows_spacing": 6,
-                "row_min_h": 28,
+                "spacing": 5,
+                "hero_min_h": 44,
+                "hero_gap": 6,
+                "rows_top": 4,
+                "rows_spacing": 4,
+                "row_min_h": 24,
             },
             "group_5_8": {
-                "sid": 15, "name": 9, "pill": 8,
-                "hero_small": 8, "hero_value": 16,
-                "detail_left": 11, "detail_right": 12,
+                "sid": 14, "name": 9, "pill": 8,
+                "hero_small": 7, "hero_value": 12,
+                "detail_left": 10, "detail_right": 10,
                 "margins": (10, 10, 10, 10),
-                "spacing": 4,
-                "hero_min_h": 62,
-                "hero_gap": 6,
+                "spacing": 6,
+                "hero_min_h": 44,
+                "hero_gap": 5,
                 "rows_top": 6,
-                "rows_spacing": 6,
-                "row_min_h": 22,
+                "rows_spacing": 5,
+                "row_min_h": 20,
             },
         }
 
@@ -498,7 +507,7 @@ class SoldierCard(QFrame):
         # Apply layout spacing for this scale
         self.root_layout.setContentsMargins(*s["margins"])
         self.root_layout.setSpacing(s["spacing"])
-        self.hero_row.setSpacing(s["hero_gap"])
+        self.hero_grid.setSpacing(s["hero_gap"])
         self.rows_layout.setContentsMargins(0, s["rows_top"], 0, 0)
         self.rows_layout.setSpacing(s["rows_spacing"])
 
@@ -513,33 +522,21 @@ class SoldierCard(QFrame):
         )
 
         self.status_pill.setFont(QFont("Bahnschrift SemiBold", s["pill"]))
+        
+        for box in [self.hr_box, self.spo2_box, self.rr_box, self.bp_box]:
+            box.small_label.setFont(QFont("Bahnschrift SemiBold", s["hero_small"]))
+            box.small_label.setStyleSheet(
+                f"color: {TEXT_DIM}; font-weight: 700; background: transparent; border: none;"
+            )
+            box.value_label.setFont(QFont("Consolas", s["hero_value"], QFont.Bold))
+            box.value_label.setStyleSheet(
+                f"color: {TEXT}; font-weight: 800; background: transparent; border: none;"
+            )
+            box.setMinimumHeight(s["hero_min_h"])
 
-        self.hr_box.small_label.setFont(QFont("Bahnschrift SemiBold", s["hero_small"]))
-        self.hr_box.small_label.setStyleSheet(
-            f"color: {TEXT_DIM}; font-weight: 700; background: transparent; border: none;"
-        )
-
-        self.spo2_box.small_label.setFont(QFont("Bahnschrift SemiBold", s["hero_small"]))
-        self.spo2_box.small_label.setStyleSheet(
-            f"color: {TEXT_DIM}; font-weight: 700; background: transparent; border: none;"
-        )
-
-        # Consolas used for numeric values — monospaced keeps layout stable as digits change
-        self.hr_box.value_label.setFont(QFont("Consolas", s["hero_value"], QFont.Bold))
-        self.hr_box.value_label.setStyleSheet(
-            f"color: {TEXT}; font-weight: 800; background: transparent; border: none;"
-        )
-
-        self.spo2_box.value_label.setFont(QFont("Consolas", s["hero_value"], QFont.Bold))
-        self.spo2_box.value_label.setStyleSheet(
-            f"color: {TEXT}; font-weight: 800; background: transparent; border: none;"
-        )
-
-        self.hr_box.setMinimumHeight(s["hero_min_h"])
-        self.spo2_box.setMinimumHeight(s["hero_min_h"])
-
+        padding = 2 if scale_name in ("group_5_8", "group_3_4") else 6
         for row in [self.hr_zone_row, self.condition_row, self.link_row, self.last_move_row, self.vbat_row]:
-            row["container"].setMinimumHeight(s["row_min_h"])
+            row["container"].layout().setContentsMargins(0, padding, 0, padding)
             row["left"].setFont(QFont("Bahnschrift SemiBold", s["detail_left"]))
             row["left"].setStyleSheet(
                 f"color: {TEXT_DIM}; font-weight: 700; background: transparent; border: none;"
@@ -548,6 +545,29 @@ class SoldierCard(QFrame):
             row["right"].setStyleSheet(
                 f"color: {TEXT}; background: transparent; border: none;"
             )
+
+        # At the end of apply_scale(), after the padding block:
+        for i in range(self.rows_layout.count()):
+            self.rows_layout.setStretch(i, 1)
+
+        for i in range(self.root_layout.count()):
+            item = self.root_layout.itemAt(i)
+            if item and item.spacerItem():
+                self.root_layout.removeItem(item)
+                break
+
+        if scale_name == "group_5_8":
+            # Remove stretch so content fills the card evenly
+            for i in range(self.root_layout.count()):
+                item = self.root_layout.itemAt(i)
+                if item and item.spacerItem():
+                    self.root_layout.removeItem(item)
+                    break
+        else:
+            # Make sure stretch exists for other scales
+            if self.root_layout.itemAt(self.root_layout.count() - 1) and \
+            not self.root_layout.itemAt(self.root_layout.count() - 1).spacerItem():
+                self.root_layout.addStretch()
 
     def mousePressEvent(self, event):
         # Forward click to the dashboard so it can toggle selection in the roster list

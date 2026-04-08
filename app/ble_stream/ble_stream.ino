@@ -1,3 +1,5 @@
+// ble_stream.ino
+
 #include <Wire.h>
 #include <Arduino.h>
 #include <bluefruit.h>
@@ -8,7 +10,8 @@
 // Set to 1 to stream IMU and PPG data over serial
 #define PPG_SERIAL 0
 #define IMU_SERIAL 0
-#define BAT_SERIAL 0
+#define RR_SERIAL 0
+#define BAT_SERIAL 0  // battery
 
 BLEUart bleuart;
 
@@ -67,6 +70,7 @@ void setup() {
   battery_setup();
   ppg_setup();
   imu_setup();
+  rr_setup();
 }
 
 void loop() {

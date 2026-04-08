@@ -1,3 +1,5 @@
+//imu.ino
+
 #include "LSM6DS3.h"
 #include "defines.h"
 
@@ -499,6 +501,8 @@ void imu_setup() {
 
 // Run strictly once per tick
 void handle_imu() {
+  rr_update(cv.ay);
+
   switch (fall_state) {
     case IDLE_FALL:
       update_values(false);  // No buffering needed — just watching for trigger

@@ -1,3 +1,5 @@
+// battery.ino
+
 #define BAT_SEND_INTERVAL 30000  // Send battery level every 30 seconds
 
 uint32_t last_bat_ms = 0;
