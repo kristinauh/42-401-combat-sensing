@@ -48,6 +48,8 @@ from theme import (
 )
 from widgets import AddSoldierDialog, SoldierCard
 
+from injury_classification import InjuryClassifier
+
 # Alert thresholds — adjust these to tune sensitivity
 SPO2_MONITOR_THRESHOLD = 95       # SpO2 below this → MONITOR after delay
 SPO2_CRITICAL_THRESHOLD = 90      # SpO2 below this → CRITICAL after delay
@@ -312,6 +314,8 @@ class DashboardWindow(QMainWindow):
             "rr": None,
             "sbp": None,
             "dbp": None,
+            "classifier": InjuryClassifier(),
+            "injury_probs": {},
         }
 
     def rebuild_device_mapping(self):
@@ -688,6 +692,18 @@ class DashboardWindow(QMainWindow):
                 state["fall_detected_since"] = time.time()
         else:
             state["fall_detected_since"] = None  # Reset once person is moving again
+        
+        classifier = state["classifier"]
+        classifier.update(
+            hr=state.get("hr"),
+            spo2=state.get("spo2"),
+            rr=state.get("rr"),
+            sp=state.get("sbp"),
+            dp=state.get("dbp"),
+            motion_state=state.get("motion_state"),
+        )
+        
+        state["injury_probabilities"] = classifier.calculate_injury_probabilities()
 
     def handle_incoming_packet(
         self,
