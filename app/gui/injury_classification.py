@@ -15,6 +15,7 @@ SI_BUF_TAG = 6
 # use as reference shock index for soldier (normal range 0.5-0.7)
 NORMAL_SI = 0.7
 SI_SLOPE = 19
+SI_WINDOW_SIZE = 20
 
 class InjuryClassifier:
     def __init__(self):
@@ -75,12 +76,12 @@ class InjuryClassifier:
         return (curr_sum / (end_idx - start_idx))
             
     # sets predicted blood loss (ml/kg) based on shock index
-    # also sets probability of hemorrhage
+    # also sets probability of hemorrhage based on SI
     def calculate_hemorrhage(self):
-        if(len(self.shock_index_buf) < 20):
+        if(len(self.shock_index_buf) < SI_WINDOW_SIZE):
             return None
         
-        avg_si_recent = self.calculate_average(len(self.shock_index_buf) - 20, len(self.shock_index_buf), SI_BUF_TAG)
+        avg_si_recent = self.calculate_average(len(self.shock_index_buf) - SI_WINDOW_SIZE, len(self.shock_index_buf), SI_BUF_TAG)
         if(avg_si_recent is not None):
             
             # force curve through origin to avoid mispredicting blood loss when SI is normal
