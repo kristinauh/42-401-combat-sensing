@@ -7,10 +7,13 @@ WINDOW_SIZE = 100
 HR_BUF_TAG = 0
 SPO2_BUF_TAG = 1
 RR_BUF_TAG = 2
-SP_BUF_TAG = 3
-DP_BUF_TAG = 4
+SBP_BUF_TAG = 3
+DBP_BUF_TAG = 4
 MOTION_BUF_TAG = 5
 SI_BUF_TAG = 6
+
+# error tolerance for each range of hemothorax and pneumothorax vitals
+HEMO_PNEUMO_TOLERANCE = 0.05
 
 # use as reference shock index for soldier (normal range 0.5-0.7)
 NORMAL_SI = 0.7
@@ -24,8 +27,8 @@ class InjuryClassifier:
         self.spo2_buf = deque(maxlen=WINDOW_SIZE)
         self.motion_buf = deque(maxlen=WINDOW_SIZE)
         self.rr_buf = deque(maxlen=WINDOW_SIZE)
-        self.sp_buf = deque(maxlen=WINDOW_SIZE)
-        self.dp_buf = deque(maxlen=WINDOW_SIZE)
+        self.sbp_buf = deque(maxlen=WINDOW_SIZE)
+        self.dbp_buf = deque(maxlen=WINDOW_SIZE)
         self.shock_index_buf = deque(maxlen=WINDOW_SIZE)
 
         # probabilities of various injury
@@ -36,7 +39,7 @@ class InjuryClassifier:
         self.injured_limb = 0
         self.high_blast = 0
 
-    def update(self, hr, spo2, rr, sp, dp, motion_state):
+    def update(self, hr, spo2, rr, sbp, dbp, motion_state):
         # add samples to right end of queue (dequeue older samples)
         if hr is not None:
             self.hr_buf.append(hr)
@@ -44,16 +47,16 @@ class InjuryClassifier:
             self.spo2_buf.append(spo2)
         if rr is not None:
             self.rr_buf.append(rr)
-        if sp is not None:
-            self.sp_buf.append(sp)
-        if dp is not None:
-            self.dp_buf.append(dp)
+        if sbp is not None:
+            self.sbp_buf.append(sbp)
+        if dbp is not None:
+            self.dbp_buf.append(dbp)
         if motion_state is not None:
             self.motion_buf.append(motion_state)
         
         # calculate shock index = heart rate / systolic blood pressure
-        if (sp is not None) and (sp != 0) and (hr is not None):
-            self.shock_index_buf.append(hr / sp)
+        if (sbp is not None) and (sbp != 0) and (hr is not None):
+            self.shock_index_buf.append(hr / sbp)
         
     # calculate averages over windows at specified parts of the buffer
     def calculate_average(self, start_idx, end_idx, buffer_tag):
@@ -61,8 +64,8 @@ class InjuryClassifier:
             case 0: buf = self.hr_buf
             case 1: buf = self.spo2_buf
             case 2: buf = self.rr_buf
-            case 3: buf = self.sp_buf
-            case 4: buf = self.dp_buf
+            case 3: buf = self.sbp_buf
+            case 4: buf = self.dbp_buf
             case 5: buf = self.motion_buf
             case 6: buf = self.shock_index_buf
             case _: raise ValueError(f"Unknown buffer_tag: {buffer_tag}")
@@ -91,15 +94,59 @@ class InjuryClassifier:
             return max(0.0, self.hemorrhage_bv_loss)
         else:
             return None
-        
-    # calculate probability of hemothorax
-    def calculate_hemothorax(self):
-        pass
     
     # calculate probability of pneumothorax
     def calculate_pneumothorax(self):
-        pass
+        if len(self.spo2_buf) < WINDOW_SIZE or len(self.rr_buf) < WINDOW_SIZE:
+            return None
+
+        third = WINDOW_SIZE // 3
+
+        spo2_early  = self.calculate_average(0,           third,        SPO2_BUF_TAG)
+        spo2_recent = self.calculate_average(third * 2,   WINDOW_SIZE,  SPO2_BUF_TAG)
+        rr_early    = self.calculate_average(0,           third,        RR_BUF_TAG)
+        rr_recent   = self.calculate_average(third * 2,   WINDOW_SIZE,  RR_BUF_TAG)
+
+        if any(v is None for v in [spo2_early, spo2_recent, rr_early, rr_recent]):
+            return None
     
+        spo2_drop = spo2_early - spo2_recent   # positive = dropping
+        rr_rise   = rr_recent - rr_early       # positive = rising
+
+        # both must be trending in the right direction
+        if spo2_drop <= 0 or rr_rise <= 0:
+            return 0.0
+
+        # scale against the article's observed ranges:
+        # SpO2 dropped 10% (99→89) and RR rose 15 (20→35) over ~10 min
+        spo2_score = min(spo2_drop / 10.0, 1.0)
+        rr_score   = min(rr_rise  / 15.0, 1.0)
+
+        probability = (spo2_score + rr_score) / 2.0
+        self.pneumothorax = probability
+        return probability
+
+    # calculate probability of hemothorax
+    def calculate_hemothorax(self):
+        # hemothorax = pneumothorax pattern + hemorrhage signal
+        ptx_prob = self.calculate_pneumothorax()
+        if ptx_prob is None or ptx_prob == 0.0:
+            return 0.0
+
+        # if SI is also elevated, shift probability toward hemothorax
+        avg_si = self.calculate_average(
+            len(self.shock_index_buf) - SI_WINDOW_SIZE,
+            len(self.shock_index_buf),
+            SI_BUF_TAG
+        )
+        if avg_si is None:
+            return ptx_prob * 0.3  # no SI data, low confidence
+
+        si_score = min(max((avg_si - NORMAL_SI) / NORMAL_SI, 0.0), 1.0)
+        self.hemothorax = ptx_prob * si_score
+        return self.hemothorax
+
+
     # calculate probability of a limb injury (fracture,
     # gunshot wound) or explosive blast injury
     def calculate_limb_and_blast_injury(self):
@@ -108,6 +155,6 @@ class InjuryClassifier:
     # main fn to update all injury probabilities
     def calculate_injury_probabilities(self):
         self.calculate_hemorrhage()
+        self.calculate_pneumothorax()
         self.calculate_hemothorax()
         self.calculate_limb_and_blast_injury()
-        self.calculate_pneumothorax()
