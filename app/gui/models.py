@@ -10,13 +10,16 @@ def display_motion_label(value):
         # Active states
         "WALKING": "Walking",
         "RUNNING": "Running",
-        "JUMPING_OR_QUICK_SIT": "Jump / Quick Sit",
+        "JUMPING": "Jumping",
+        "LIMPING": "Limping",
+        "SITTING": "Sitting",
+        "SQUATTING": "Squatting",
         # Fall pipeline states
         "IDLE_FALL": "Monitoring",
         "CHECK_FALL": "Checking...",
         "ANALYZE_IMPACT": "Analysing...",
         "DETECTED_FALL": "Fall Detected",
-        "STATIONARY_POST_FALL": "Down — Not Moving",
+        "STATIONARY_POST_FALL": "Down - Not Moving",
         # Link states
         "NO DATA": "Signal Lost",
     }
@@ -65,5 +68,5 @@ def calculate_hr_zone(age, hr):
 @dataclass
 class SoldierInfo:
     name: str
-    age: Optional[int]   # Used for HR zone calculation — None if not provided
+    age: Optional[int]   # Used for HR zone calculation - None if not provided
     device_id: str       # Must match the BLE device ID in main.py
