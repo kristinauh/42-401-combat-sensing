@@ -332,7 +332,7 @@ FALL_STATES analyze_event_score() {
     scores[5] = score_sit(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
     scores[6] = score_squat(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
 
-#if IMU_SERIAL
+#if IMU_DEBUG
     Serial.print("fall  score: "); Serial.print(scores[0]);
     Serial.print("; limp  score: "); Serial.print(scores[1]);
     Serial.print("; run   score: "); Serial.print(scores[2]);
@@ -354,7 +354,7 @@ FALL_STATES analyze_event_score() {
         }
     }
 
-#if IMU_SERIAL
+#if IMU_DEBUG
     Serial.print("high score index: "); Serial.println(high_score_idx);
 #endif
 

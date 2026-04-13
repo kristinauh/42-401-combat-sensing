@@ -5,6 +5,7 @@
 
 // DEBUGGING MACROS
 #define DEBUG_ANGLE 1
+#define DEBUG_IMU 1
 
 // constants
 const float G = 9.81;
@@ -13,7 +14,7 @@ const bool USE_BLE = false;
 // macros
 
 // should run at 100Hz
-#define LOOP_DELAY 7
+#define LOOP_DELAY 10
 
 // These values are inspired by the paper
 #define BUF_SIZE 200
@@ -222,9 +223,11 @@ void initialize_values() {
     fall_state = IDLE_FALL;
     cv.A_SVM = 0.0;
     cv.G_SVM = 0.0;
-    cv.min_asvm = 0.0;
+    cv.min_asvm = 9999.9f;
     cv.fall_impact = 0.0;
     cv.fall_event_val = 0.0;
+    A_SVM_mean = 0.0f;
+    G_SVM_mean = 0.0f;
     update_pos = 0;
     check_pos = 0;
     max_pos = 0;
@@ -429,26 +432,30 @@ float std_dev_check(IMU_COMP dev_type, int buffer_size) {
     
 }
 
+// Compares body tilt before and after the event to help confirm a fall
+// A genuine fall should show a significant change in vertical orientation
 float posture_check() {
-    float tilt_init_sum = 0.0;
-    float tilt_final_sum = 0.0;
-    float hor_dist = 0.0;
+    float tilt_init_sum = 0.0f;
+    float tilt_final_sum = 0.0f;
+    float hor_dist = 0.0f;
 
-    // extremely naive implementation, optimize later
-    for(int i = 0; i < check_pos; i++) {
-        hor_dist = sqrt(ax_buf[i]*ax_buf[i] + az_buf[i]*az_buf[i]);
-        tilt_init_sum += atan2(ay_buf[i], hor_dist);
+    // just calculate across first 25 samples if check_pos is 0 to avoid div by 0
+    int end_idx_init = (check_pos == 0) ? 25 : check_pos;
+
+    for (int i = 0; i < end_idx_init; i++) {
+        hor_dist = sqrtf(ax_buf[i] * ax_buf[i] + az_buf[i] * az_buf[i]);
+        tilt_init_sum += atan2f(ay_buf[i], hor_dist);
     }
 
     int end_idx = min(BUF_SIZE, max_pos + BUF_SMALL);
-    
-    for(int i = max_pos; i < end_idx; i++) {
-        hor_dist = sqrt(ax_buf[i]*ax_buf[i] + az_buf[i]*az_buf[i]);
-        tilt_final_sum += atan2(ay_buf[i], hor_dist);
+
+    for (int i = max_pos; i < end_idx; i++) {
+        hor_dist = sqrtf(ax_buf[i] * ax_buf[i] + az_buf[i] * az_buf[i]);
+        tilt_final_sum += atan2f(ay_buf[i], hor_dist);
     }
 
-    float avg_init = (RAD_TO_DEG_CONV*tilt_init_sum) / (check_pos);
-    float avg_final = (RAD_TO_DEG_CONV*tilt_final_sum) / (end_idx - max_pos);
+    float avg_init = (RAD_TO_DEG_CONV * tilt_init_sum) / end_idx_init;
+    float avg_final = (RAD_TO_DEG_CONV * tilt_final_sum) / (end_idx - max_pos);
 
     if(DEBUG_ANGLE) {
         Serial.print("******* init: "); Serial.println(avg_init);
@@ -648,9 +655,20 @@ FALL_STATES analyze_event_score() {
     scores[5] = score_sit(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
     scores[6] = score_squat(std_accel, std_gyro, max_asvm, min_asvm, angle_diff, skewness);
 
+    if(DEBUG_IMU) {
+      Serial.print("fall  score: "); Serial.print(scores[0]);
+      Serial.print("; limp  score: "); Serial.print(scores[1]); 
+      Serial.print("; run   score: "); Serial.print(scores[2]); 
+      Serial.print("; walk  score: "); Serial.print(scores[3]); 
+      Serial.print("; jump  score: "); Serial.print(scores[4]); 
+      Serial.print("; sit   score: "); Serial.print(scores[5]); 
+      Serial.print("; squat score: "); Serial.println(scores[6]);
+    }
+
     int high_score_idx = -1;
     int high_score = 0;
 
+    // find event with the highest match score
     for(int i = 0; i < 7; i++) {
         // strictly greater to maintain priority ranking
         if(scores[i] > high_score) {
@@ -658,7 +676,28 @@ FALL_STATES analyze_event_score() {
             high_score_idx = i;
         }
     }
+    if(DEBUG_IMU) {
+      Serial.print("High score index: "); Serial.println(high_score_idx);
+    }
 
+    // require fall detection to include angle change to avoid hella false positives from priority ranking
+    if(high_score_idx == 0) {
+      // discriminate based on angle only
+      if(angle_diff >= TILT_TRIGGER) {
+        return DETECTED_FALL;
+      }
+      else if((scores[4] >= scores[5]) && (scores[4] >= scores[6])) {
+        return JUMPING;
+      }
+      else if((scores[5] >= scores[4]) && (scores[5] >= scores[6])) {
+        return SITTING;
+      }
+      else if((scores[6] >= scores[4]) && (scores[6] >= scores[5])) {
+        return SQUATTING;
+      }
+    }
+
+    // no event matched closely enough, return IDLE
     if(high_score < MIN_SCORE) {
         return IDLE_FALL;
     }

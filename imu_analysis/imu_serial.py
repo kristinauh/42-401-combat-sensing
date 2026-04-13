@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 import serial
 
-SERIAL_PORT = "COM8"
+SERIAL_PORT = "COM5"
 BAUD_RATE = 115200
 
 PERSON = "test"

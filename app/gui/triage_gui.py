@@ -48,6 +48,8 @@ from theme import (
 )
 from widgets import AddSoldierDialog, SoldierCard
 
+from injury_classification import InjuryClassifier
+
 # Triage configuration
 PATTERN_PERSIST_SEC = 15            # hemorrhage / pneumothorax / SI patterns
 FALL_CRITICAL_DURATION_SEC = 60     # still on ground post-fall -> CRITICAL
@@ -315,6 +317,10 @@ class DashboardWindow(QMainWindow):
             "shock_index_monitor_since": None,
             "shock_index_critical_since": None,
             "fall_detected_since": None,
+
+            # Injury classifier (teammate's module)
+            "classifier": InjuryClassifier(),
+            "injury_probs": {},
         }
 
     def rebuild_device_mapping(self):
@@ -780,11 +786,25 @@ class DashboardWindow(QMainWindow):
         state = self.soldier_state[soldier_id]
         for key, value in kwargs.items():
             state[key] = value
-            if key == "motion_state" and value in ("WALKING", "RUNNING", "JUMPING_OR_QUICK_SIT"):
+            if key == "motion_state" and value in (
+                "WALKING", "RUNNING", "JUMPING", "LIMPING", "SQUATTING",
+            ):
                 state["last_motion_time"] = time.time()
 
         # Recompute all persistence timers after applying new values
         self._update_persistence_timers(state)
+
+        # Update injury classifier with latest vitals
+        classifier = state["classifier"]
+        classifier.update(
+            hr=state.get("hr"),
+            spo2=state.get("spo2"),
+            rr=state.get("rr"),
+            sbp=state.get("sbp"),
+            dbp=state.get("dbp"),
+            motion_state=state.get("motion_state"),
+        )
+        state["injury_probs"] = classifier.calculate_injury_probabilities()
 
     def handle_incoming_packet(
         self,

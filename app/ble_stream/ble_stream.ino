@@ -9,10 +9,12 @@
 
 // Set to 1 to stream IMU and PPG data over serial
 #define PPG_SERIAL 0
-#define IMU_SERIAL 0
+#define IMU_SERIAL 0 // for data collection
 #define RR_SERIAL 0
 #define BP_SERIAL 0
 #define BAT_SERIAL 0  // battery
+
+#define IMU_DEBUG 0 // so debug prints don't clobber data collection
 
 BLEUart bleuart;
 

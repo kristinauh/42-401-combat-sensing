@@ -1,7 +1,7 @@
 % Test code for checking out the collected data
 set(groot, 'defaultTextInterpreter', 'None');
 
-file_name = './data/raw/iris/limp_left_injured_1.csv';
+file_name = './data/raw/harry/fall_forward_0.csv';
 T0 = readtable(file_name);
 dataCols = T0.Properties.VariableNames( ...
     varfun(@isnumeric, T0, 'OutputFormat','uniform') ...
@@ -47,6 +47,16 @@ INIT_TILT_SIZE = 10;
 FINAL_TILT_SIZE = 60;
 
 idle_trigger = find(T0.ASVM <= IDLE_TRIGGER, 1, 'first');
+
+%% test fft lol
+Y = fft(T0.ASVM);
+fs = 100
+f = fs.*time0./60; % hz to bpm
+figure;
+hold on;
+plot(f(1:300), abs(Y(1:300)));
+hold off;
+%% 
 check_trigger_idx = find(T0.ASVM(idle_trigger:end) >= CHECK_TRIGGER, 1, 'first');
 check_trigger = idle_trigger + check_trigger_idx - 1;
 
