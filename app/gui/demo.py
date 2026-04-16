@@ -51,9 +51,12 @@ class DemoController:
             "IDLE_FALL",
             "WALKING",
             "WALKING",
+            "LIMPING",
             "RUNNING",
             "RUNNING",
-            "JUMPING_OR_QUICK_SIT",
+            "JUMPING",
+            "SITTING",
+            "SQUATTING",
             "DETECTED_FALL",
             "STATIONARY_POST_FALL",
         ]
@@ -116,9 +119,13 @@ class DemoController:
                 new_hr = random.randint(int(max_hr * 0.70), int(max_hr * 0.88))
             if new_motion == "IDLE_FALL" and zone_choice >= 5:
                 new_hr = random.randint(int(max_hr * 0.65), int(max_hr * 0.85))
+            
+            new_imu_impact = random.randint(0, 7)
+            if new_motion == "DETECTED_FALL":
+                new_imu_impact = random.randint(7, 70)
 
             # Occasionally inject multi-vital injury scenarios
-            if random.random() < 0.08:
+            if random.random() < 0.9: # 0.08:
                 scenario = random.choice([
                     "hemorrhage_class2",
                     "hemorrhage_class3",
@@ -167,6 +174,7 @@ class DemoController:
                 rr=new_rr,
                 sbp=new_sbp,
                 dbp=new_dbp,
+                imu_impact=new_imu_impact,
             )
 
     def schedule_next_demo_update(self):

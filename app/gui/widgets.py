@@ -532,7 +532,6 @@ class SoldierCard(QFrame):
                 f"color: {vbat_color}; background: transparent; border: none;"
             )
         if injury_probs:
-            # print(f"[{self.soldier_id}] injury_probs: {injury_probs}")  # temp debug
             self.update_injury_probs(injury_probs)
 
     def set_hero_alerts(self, hr, spo2):

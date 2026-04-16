@@ -95,7 +95,7 @@ class InjuryClassifier:
             
             # force curve through origin to avoid mispredicting blood loss when SI is normal
             self.hemorrhage_bv_loss = (avg_si_recent - NORMAL_SI)/(NORMAL_SI) * SI_SLOPE
-            hem_tmp = max((avg_si_recent - NORMAL_SI)*5, 0)
+            hem_tmp = max((avg_si_recent - NORMAL_SI) / (1.2 - NORMAL_SI), 0)
             self.hemorrhage = min(hem_tmp, 1)
             return max(0.0, self.hemorrhage_bv_loss) # bv loss should never be negative
         else:
@@ -185,8 +185,11 @@ class InjuryClassifier:
         else:
             limp_prop = float(limp_cnt) / float(motion_cnt)
         
-        self.injured_limb = max(min(0, 1.25*(limp_prop - LIMP_MOTION_THRESHOLD)), 1)
-        self.impact_injury = 0.0 if not fall_detected else max(min(0.125*(impact_magnitude - IMPACT_THRESHOLD), 0), 1)
+        self.injured_limb = min(max(0, 1.25*(limp_prop - LIMP_MOTION_THRESHOLD)), 1)
+        
+        # update to incorporate stationary and/or limping
+        self.impact_injury = 0.0 if not fall_detected else min(max(0.125*(impact_magnitude - IMPACT_THRESHOLD), 0), 1)
+
     
     # main fn to update all injury probabilities
     def calculate_injury_probabilities(self):

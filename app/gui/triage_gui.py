@@ -817,7 +817,7 @@ class DashboardWindow(QMainWindow):
 
         # Update injury classifier with latest vitals
         classifier = state["classifier"]
-        print(f"[buf sizes — hr:{len(classifier.hr_buf)} spo2:{len(classifier.spo2_buf)} rr:{len(classifier.rr_buf)} si:{len(classifier.shock_index_buf)}")
+        # print(f"[buf sizes — hr:{len(classifier.hr_buf)} spo2:{len(classifier.spo2_buf)} rr:{len(classifier.rr_buf)} si:{len(classifier.shock_index_buf)}")
         classifier.update(
             hr=state.get("hr"),
             spo2=state.get("spo2"),
