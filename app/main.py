@@ -27,7 +27,7 @@ UI_REFRESH_INTERVAL_MS = 1000
 class BLEBridge(QObject):
     # Qt signals are used to safely pass data from the BLE thread to the GUI thread
     ppg_received = Signal(str, object, object)  # device_id, hr, spo2
-    imu_received = Signal(str, str)             # device_id, motion_state
+    imu_received = Signal(str, str, float)             # device_id, motion_state
     bat_received = Signal(str, float)           # device_id, vbat
     rr_received = Signal(str, float)
     bp_received = Signal(str, object, object)  # device_id, sbp, dbp
@@ -63,7 +63,7 @@ class BLEBackend:
                 _, ts, state, event_val, impact = decoded
                 state_name = STATE_NAMES.get(state, str(state))
                 print(f"[BLE RX][IMU] state={state_name} event={event_val:.2f} impact={impact:.2f}")
-                self.bridge.imu_received.emit(DEVICE_ID, state_name)
+                self.bridge.imu_received.emit(DEVICE_ID, state_name, float(impact))
 
             elif ptype == "B":
                 _, ts, vbat = decoded
@@ -114,9 +114,10 @@ def main():
         )
     )
     bridge.imu_received.connect(
-        lambda device_id, motion_state: window.handle_incoming_packet(
+        lambda device_id, motion_state, impact: window.handle_incoming_packet(
             device_id=device_id,
             motion_state=motion_state,
+            imu_impact=impact
         )
     )
     bridge.bat_received.connect(

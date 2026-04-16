@@ -20,6 +20,9 @@ NORMAL_SI = 0.7
 SI_SLOPE = 19
 SI_WINDOW_SIZE = 20
 
+LIMP_MOTION_THRESHOLD = 0.2
+IMPACT_THRESHOLD = 8
+
 class InjuryClassifier:
     def __init__(self):
         # buffers for most recent data
@@ -30,6 +33,7 @@ class InjuryClassifier:
         self.sbp_buf = deque(maxlen=WINDOW_SIZE)
         self.dbp_buf = deque(maxlen=WINDOW_SIZE)
         self.shock_index_buf = deque(maxlen=WINDOW_SIZE)
+        self.impact_buf = deque(maxlen=WINDOW_SIZE)
 
         # probabilities of various injury
         self.hemorrhage = 0
@@ -37,9 +41,9 @@ class InjuryClassifier:
         self.hemothorax = 0
         self.pneumothorax = 0
         self.injured_limb = 0
-        self.high_blast = 0
+        self.impact_injury = 0
 
-    def update(self, hr, spo2, rr, sbp, dbp, motion_state):
+    def update(self, hr, spo2, rr, sbp, dbp, motion_state, imu_impact):
         # add samples to right end of queue (dequeue older samples)
         if hr is not None:
             self.hr_buf.append(hr)
@@ -53,6 +57,8 @@ class InjuryClassifier:
             self.dbp_buf.append(dbp)
         if motion_state is not None:
             self.motion_buf.append(motion_state)
+        if imu_impact is not None:
+            self.impact_buf.append(imu_impact)
         
         # calculate shock index = heart rate / systolic blood pressure
         if (sbp is not None) and (sbp != 0) and (hr is not None):
@@ -91,7 +97,7 @@ class InjuryClassifier:
             self.hemorrhage_bv_loss = (avg_si_recent - NORMAL_SI)/(NORMAL_SI) * SI_SLOPE
             hem_tmp = max((avg_si_recent - NORMAL_SI)*5, 0)
             self.hemorrhage = min(hem_tmp, 1)
-            return max(0.0, self.hemorrhage_bv_loss)
+            return max(0.0, self.hemorrhage_bv_loss) # bv loss should never be negative
         else:
             return None
     
@@ -148,13 +154,52 @@ class InjuryClassifier:
 
 
     # calculate probability of a limb injury (fracture,
-    # gunshot wound) or explosive blast injury
-    def calculate_limb_and_blast_injury(self):
-        pass
+    # gunshot wound) or explosive blast injury / high fall impact injury
+    def calculate_limb_and_impact_injury(self):
+        limp_cnt = 0
+        motion_cnt = 0
+        stationary_cnt = 0
+        fall_detected = False
+        impact_magnitude = 0
+        if(len(self.motion_buf) < 2):
+            return None
+        
+        # count proportion of limp, and other motion events
+        for i in range(0, len(self.motion_buf)):
+            if(self.motion_buf[i] in ["LIMPING"]):
+                limp_cnt = limp_cnt + 1
+                motion_cnt = motion_cnt + 1
+            if(self.motion_buf[i] in ["WALKING", "RUNNING", "JUMPING", "SQUATTING", "SITTING"]):
+                motion_cnt = motion_cnt + 1
+            if(self.motion_buf[i] in ["STATIONARY"]):
+                stationary_cnt = stationary_cnt + 1
+            if(self.motion_buf[i] in ["DETECTED_FALL"]):
+                fall_detected = True
+                if(i < len(self.impact_buf)):
+                    impact_magnitude = self.impact_buf[i]
+                else:
+                    impact_magnitue = 0.0
+                
+        if(motion_cnt == 0):
+            limp_prop = 0.0
+        else:
+            limp_prop = float(limp_cnt) / float(motion_cnt)
+        
+        self.injured_limb = 1.25*(limp_prop - LIMP_MOTION_THRESHOLD)
+        self.impact_injury = 0.0 if not fall_detected else 0.125*(impact_magnitude - IMPACT_THRESHOLD)
     
     # main fn to update all injury probabilities
     def calculate_injury_probabilities(self):
         self.calculate_hemorrhage()
         self.calculate_pneumothorax()
         self.calculate_hemothorax()
-        self.calculate_limb_and_blast_injury()
+        self.calculate_limb_and_impact_injury()
+        
+        return {
+            "hemorrhage":         self.hemorrhage,
+            "hemorrhage_bv_loss": self.hemorrhage_bv_loss,
+            "hemothorax":         self.hemothorax,
+            "pneumothorax":       self.pneumothorax,
+            "injured_limb":       self.injured_limb,
+            "impact_injury":      self.impact_injury,
+        }

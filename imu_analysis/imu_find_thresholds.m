@@ -21,12 +21,13 @@ all_idx_sizes = [];
 % ];
 
 % all serially sampled data, separated into event windows - for determining event thresholds
-folders_to_search = [
-    "data/split/shanaya"
-    "data/split/lilly"
-    "data/split/iris"
-    "data/split/harry"
-];
+% folders_to_search = [
+%     "data/split/shanaya"
+%     "data/split/lilly"
+%     "data/split/iris"
+%     "data/split/harry"
+% ];
+folders_to_search = ["data/split/harry2", "data/split/harry", "data/split/iris"];
 
 no_event_cnt = 0;
 event_file_paths = [];

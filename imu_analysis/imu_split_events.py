@@ -97,10 +97,7 @@ def process_folders(people: List[str]):
 # --- Entry point ---
 if __name__ == "__main__":
     people = [
-        "lilly",
-        "shanaya",
-        "iris",
-        "harry"
+        "harry2"
     ]
 
     process_folders(people)
