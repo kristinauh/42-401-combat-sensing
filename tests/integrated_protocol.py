@@ -58,7 +58,7 @@ FIELDNAMES = [
     "time", "activity_label",
     "ble_hr", "ble_spo2",
     "imu_state", "imu_event_val", "imu_impact",
-    "ble_rr", "ble_sbp", "ble_dbp", "ble_vbat",
+    "ble_rr", "ble_sbp", "ble_dbp", "ble_vbat", "v_percent",
     "ref_hr", "ref_spo2",
 ]
 
@@ -77,6 +77,17 @@ current_step_idx: int  = -1   # index into PROTOCOL_STEPS, -1 = not started
 current_remaining: int = 0    # remaining seconds in current step as reported by on_tick
 last_tick_wall: float = 0.0
 
+def vbat_to_percent(vbat):
+    if vbat is None:
+        return None
+
+    if vbat >= 3.5:
+        pct = 7 + (vbat - 3.5) / (4.2 - 3.5) * 93
+    else:
+        pct = (vbat - 2.5) / (3.5 - 2.5) * 7
+
+    return max(0, min(100, int(pct)))
+    
 def get_protocol_time() -> float:
     if not p_running or current_step_idx < 0 or current_remaining <= 0:
         return 0.0
@@ -197,10 +208,14 @@ def handle_notification(sender, data: bytearray):
             row["ble_dbp"] = "" if dbp is None else f"{dbp:.1f}"
             print(f"[BP] SBP={row['ble_sbp']}  DBP={row['ble_dbp']} mmHg")
 
-        elif ptype == "B":
+        elif ptype == "B":  # Battery packet
             _, ts, vbat = pkt
             row["ble_vbat"] = f"{vbat:.2f}"
-            print(f"[BAT] {row['ble_vbat']} V")
+
+            v_pct = vbat_to_percent(vbat)
+            row["v_percent"] = "" if v_pct is None else str(v_pct)
+
+            print(f"[BAT] {row['ble_vbat']} V  ({row['v_percent']}%)")
 
         with row_lock:
             data_rows.append(row)

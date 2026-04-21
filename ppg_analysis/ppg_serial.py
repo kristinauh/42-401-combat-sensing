@@ -23,8 +23,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-PPG_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_raw_recal.csv")
-REF_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_ref_recal.csv")
+PPG_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_raw_KH.csv")
+REF_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_ref_KH.csv")
 
 WINDOW = 10.0  # seconds per window
 
@@ -33,16 +33,24 @@ WINDOW = 10.0  # seconds per window
 # Lin et al., "A Novel Chest-Based PPG Measurement System," IEEE JTEHM, 2024
 # https://pmc.ncbi.nlm.nih.gov/articles/PMC11573410/
 # See paper for full protocol details and chest placement (locations a–d)
+# PROTOCOL_STEPS = [
+#     ("Normal breath", 60),
+#     ("Deep breath", 30),
+#     ("Normal breath", 60),
+#     ("Hold breath", 30),
+#     ("Normal breath", 60),
+#     ("Finger tap", 30),
+#     ("Normal breath", 60),
+#     ("Swing arm", 30),
+#     ("Normal breath", 60),
+# ]
+
 PROTOCOL_STEPS = [
     ("Normal breath", 60),
     ("Deep breath", 30),
     ("Normal breath", 60),
     ("Hold breath", 30),
-    ("Normal breath", 60),
-    ("Finger tap", 30),
-    ("Normal breath", 60),
-    ("Swing arm", 30),
-    ("Normal breath", 60),
+    ("Normal breath", 60)
 ]
 
 def now_iso():

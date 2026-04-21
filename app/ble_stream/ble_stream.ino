@@ -8,8 +8,8 @@
 #include "defines.h"
 
 // Set to 1 to stream IMU and PPG data over serial
-#define PPG_SERIAL 0
-#define IMU_SERIAL 1 // for data collection
+#define PPG_SERIAL 1
+#define IMU_SERIAL 0 // for data collection
 #define RR_SERIAL 0
 #define BP_SERIAL 0
 #define BAT_SERIAL 0  // battery
@@ -56,6 +56,12 @@ float min_float(const float *x, int n) {
     if (x[i] < m) m = x[i];
   }
   return m;
+}
+
+float rms_float(const float *x, int n) {
+  float s = 0.0f;
+  for (int i = 0; i < n; i++) s += x[i] * x[i];
+  return sqrtf(s / (float)n);
 }
 
 void setup() {

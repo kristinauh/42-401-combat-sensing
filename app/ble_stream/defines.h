@@ -2,6 +2,13 @@
 
 #pragma once
 
+// Filter
+typedef struct {
+  float b0, b1, b2;
+  float a1, a2;
+  float z1, z2;
+} biquad_t;
+
 // IMU constants
 const float G = 9.81f;
 const float RAD_TO_DEG_CONV = 57.295779f;

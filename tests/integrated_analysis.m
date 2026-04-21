@@ -1,7 +1,7 @@
 %% Config
 
-csv_files = {'data/integrated_FL.csv'};
-participant_labels = {'HB'};
+csv_files = {'data/integrated_KH.csv'};
+participant_labels = {'KH'};
 % 
 % csv_files = {
 %     'data/integrated_P1.csv', ...
@@ -445,7 +445,7 @@ if n_participants > 1
         saveas(f, fullfile(output_dir, 'pooled_imu_heatmap.png'));
     end
 
-    %% Summary table
+    % Summary table
 
     fprintf('\nSummary\n');
     fprintf('%-6s  %12s  %13s  %12s\n', 'ID', 'HR MAE (bpm)', 'SpO2 MAE (%)', 'IMU Acc (%)');
@@ -459,6 +459,138 @@ end  % n_participants > 1
 
 fprintf('\nDone.\n');
 
+
+% Estimated vs true HR and SpO2 across activity windows
+
+    % Get start/end time of each activity window that actually has paired data
+    win_centers = [];
+    win_edges   = [];
+    win_ticks   = {};
+    for w = 1:numel(win_order)
+        mask_w = T.activity_label == win_order{w};
+        if ~any(mask_w), continue; end
+        t_w = T.time(mask_w);
+        t_start = min(t_w);
+        t_end   = max(t_w);
+
+        % Skip this window if no paired HR and no paired SpO2 fall inside it
+        in_hr   = any(paired_hr_t   >= t_start & paired_hr_t   <= t_end);
+        in_spo2 = any(paired_spo2_t >= t_start & paired_spo2_t <= t_end);
+        if ~in_hr && ~in_spo2, continue; end
+
+        win_centers(end+1) = (t_start + t_end) / 2;     %#ok<SAGROW>
+        win_edges(end+1)   = t_end;                     %#ok<SAGROW>
+        win_ticks{end+1}   = win_labels{w};             %#ok<SAGROW>
+    end
+
+    f = figure('Position', [100 100 900 600], 'Color', 'w');
+
+    % HR subplot
+    ax1 = subplot(2,1,1);  hold(ax1, 'on');
+    plot(ax1, paired_hr_t, paired_hr_ref, 'k-o', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Reference HR');
+    plot(ax1, paired_hr_t, paired_hr_ble, 'r--s', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Measured HR');
+    for e = 1:numel(win_edges)-1
+        xline(ax1, win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
+            'HandleVisibility', 'off');
+    end
+    ylabel(ax1, 'Heart Rate (bpm)', 'FontSize', label_fontsize);
+    legend(ax1, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
+    grid(ax1, 'on');  ax1.GridAlpha = 0.15;  ax1.GridLineStyle = ':';
+    style_ax(ax1, fig_fontsize);
+    set(ax1, 'XTick', win_centers, 'XTickLabel', win_ticks, ...
+             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
+
+    % SpO2 subplot
+    ax2 = subplot(2,1,2);  hold(ax2, 'on');
+    plot(ax2, paired_spo2_t, paired_spo2_ref, 'k-o', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Reference SpO_{2}');
+    plot(ax2, paired_spo2_t, paired_spo2_ble, 'r--s', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Measured SpO_{2}');
+    for e = 1:numel(win_edges)-1
+        xline(ax2, win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
+            'HandleVisibility', 'off');
+    end
+    ylabel(ax2, 'SpO_{2} (%)', 'FontSize', label_fontsize);
+    legend(ax2, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
+    grid(ax2, 'on');  ax2.GridAlpha = 0.15;  ax2.GridLineStyle = ':';
+    style_ax(ax2, fig_fontsize);
+    set(ax2, 'XTick', win_centers, 'XTickLabel', win_ticks, ...
+             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
+
+    linkaxes([ax1 ax2], 'x');
+    xlim(ax1, [0 max([paired_hr_t paired_spo2_t])]);
+
+    if save_figures
+        saveas(f, fullfile(output_dir, sprintf('%s_hr_spo2_vs_window.png', pid)));
+    end
+
+%% Estimated vs true HR and SpO2 across activity windows
+
+    % Get start/end time of each activity window that actually has paired data
+    win_centers = [];
+    win_edges   = [];
+    win_ticks   = {};
+    for w = 1:numel(win_order)
+        mask_w = T.activity_label == win_order{w};
+        if ~any(mask_w), continue; end
+        t_w = T.time(mask_w);
+        t_start = min(t_w);
+        t_end   = max(t_w);
+
+        % Skip this window if no paired HR and no paired SpO2 fall inside it
+        in_hr   = any(paired_hr_t   >= t_start & paired_hr_t   <= t_end);
+        in_spo2 = any(paired_spo2_t >= t_start & paired_spo2_t <= t_end);
+        if ~in_hr && ~in_spo2, continue; end
+
+        win_centers(end+1) = (t_start + t_end) / 2;     %#ok<SAGROW>
+        win_edges(end+1)   = t_end;                     %#ok<SAGROW>
+        win_ticks{end+1}   = win_labels{w};             %#ok<SAGROW>
+    end
+
+    f = figure('Position', [100 100 900 600], 'Color', 'w');
+
+    % HR subplot
+    ax1 = subplot(2,1,1);  hold(ax1, 'on');
+    plot(ax1, paired_hr_t, paired_hr_ref, 'k-o', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Reference HR');
+    plot(ax1, paired_hr_t, paired_hr_ble, 'r--s', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Measured HR');
+    for e = 1:numel(win_edges)-1
+        xline(ax1, win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
+            'HandleVisibility', 'off');
+    end
+    ylabel(ax1, 'Heart Rate (bpm)', 'FontSize', label_fontsize);
+    legend(ax1, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
+    grid(ax1, 'on');  ax1.GridAlpha = 0.15;  ax1.GridLineStyle = ':';
+    style_ax(ax1, fig_fontsize);
+    set(ax1, 'XTick', win_centers, 'XTickLabel', win_ticks, ...
+             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
+
+    % SpO2 subplot
+    ax2 = subplot(2,1,2);  hold(ax2, 'on');
+    plot(ax2, paired_spo2_t, paired_spo2_ref, 'k-o', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Reference SpO_{2}');
+    plot(ax2, paired_spo2_t, paired_spo2_ble, 'r--s', ...
+        'LineWidth', 1.5, 'MarkerSize', 5, 'DisplayName', 'Measured SpO_{2}');
+    for e = 1:numel(win_edges)-1
+        xline(ax2, win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
+            'HandleVisibility', 'off');
+    end
+    ylabel(ax2, 'SpO_{2} (%)', 'FontSize', label_fontsize);
+    legend(ax2, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
+    grid(ax2, 'on');  ax2.GridAlpha = 0.15;  ax2.GridLineStyle = ':';
+    style_ax(ax2, fig_fontsize);
+    set(ax2, 'XTick', win_centers, 'XTickLabel', win_ticks, ...
+             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
+
+    linkaxes([ax1 ax2], 'x');
+    xlim(ax1, [0 max([paired_hr_t paired_spo2_t])]);
+
+    if save_figures
+        saveas(f, fullfile(output_dir, sprintf('%s_hr_spo2_vs_window.png', pid)));
+    end
 
 %% Helpers
 

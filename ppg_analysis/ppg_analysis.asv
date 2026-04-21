@@ -243,7 +243,7 @@ for k = 1:num_windows
         continue;
     end
 
-    R_k = median(R_win);
+    R_k = R_win(1);  % median is more robust than mean to outlier segments
 
     est_spo2_fit_all(k) = SPO2_A_fit - SPO2_B_fit * R_k;
     est_spo2_fit_all(k) = min(100, est_spo2_fit_all(k));
@@ -698,7 +698,7 @@ grid on
 
 %% Grid plot: filtered PPG signals for selected windows
 plot_win_start = 8;   % first window index to plot (1-based index into win_ids)
-plot_win_end   = 23;  % last window index to plot
+plot_win_end   =;  % last window index to plot
 
 plot_win_end = min(plot_win_end, length(win_ids));
 selected_wins = win_ids(plot_win_start:plot_win_end);

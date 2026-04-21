@@ -20,7 +20,7 @@ void setup() {
 
   sensor.setup(
     120,          // LED power
-    4,            // sample average
+    1,            // sample average
     2,            // red + IR
     SAMPLE_RATE,  // sample rate
     411,          // pulse width

@@ -27,8 +27,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-PPG_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_raw_temp.csv")
-REF_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_ref_temp.csv")
+PPG_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_raw_loc_a.csv")
+REF_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_ref_loc_a.csv")
 
 # (activity label, duration in seconds)
 # 7-minute protocol adapted from:
@@ -49,14 +49,14 @@ REF_OUTPUT_FILE = os.path.join(DATA_DIR, "ppg_ref_temp.csv")
 # Shortened protocol for parameter selection testing
 PROTOCOL_STEPS = [
     ("Normal breath", 60, "Breathe normally. Stay still."),
-    # ("Deep breath",   30, "Take slow, deep breaths."),
-    # ("Normal breath", 30, "Breathe normally. Stay still."),
-    # ("Hold breath",   30, "Hold your breath."),
-    # ("Normal breath", 30, "Breathe normally. Stay still."),
-    # ("Swing arm",     60, "Swing your arm back and forth."),
-    # ("Normal breath", 30, "Breathe normally. Stay still."),
-    # ("Jog in place",  60, "Jog in place at a steady pace."),
-    # ("Normal breath", 60, "Breathe normally. Stay still."),
+    ("Deep breath",   30, "Take slow, deep breaths."),
+    ("Normal breath", 30, "Breathe normally. Stay still."),
+    ("Hold breath",   30, "Hold your breath."),
+    ("Normal breath", 30, "Breathe normally. Stay still."),
+    ("Swing arm",     60, "Swing your arm back and forth."),
+    ("Normal breath", 30, "Breathe normally. Stay still."),
+    ("Jog in place",  60, "Jog in place at a steady pace."),
+    ("Normal breath", 60, "Breathe normally. Stay still."),
 ]
 
 HTML = """
