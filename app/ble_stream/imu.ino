@@ -22,10 +22,17 @@ float az_buf[BUF_SIZE];
 float asvm_buf[BUF_SIZE];    // Scalar vector magnitude history for accel
 float gsvm_buf[BUF_SIZE];    // Scalar vector magnitude history for gyro
 
+
 int update_pos = 0;
 int check_pos = 0;           // Buffer index where high-accel impact was first seen
 int max_pos = 0;             // Buffer index of peak impact acceleration
 bool avg_valid = false;
+
+
+float angle_buf[BUF_SMALL]; // small buffer to save angles before event window
+int angle_buf_pos = 0; // write index for angle buffer
+bool angle_buf_full = false;
+float init_angle_latch = 0.0f; // latched pre-event angle when IDLE trigger is hit
 
 float A_SVM_mean = 0.0f;
 float G_SVM_mean = 0.0f;
@@ -64,6 +71,9 @@ void initialize_values() {
   check_fall_large_accel = false;
   check_fall_max_accel = 0.0f;
   stationary_count = 0;
+  angle_buf_pos = 0;
+  angle_buf_full = false;
+  init_angle_latch = 0.0f;
 }
 
 // Read IMU, apply calibration offsets, and optionally push into circular buffers
@@ -86,6 +96,16 @@ void update_values(bool update_buffers) {
 
   cv.delta_time = millis() - cv.curr_time;
   cv.curr_time += cv.delta_time;
+
+  // only need to save angle buffers in IDLE state, to save pre-impact angle
+  if(fall_state == IDLE_FALL) {
+    float hor_dist = sqrtf(cv.ax * cv.ax + cv.az*cv.az);
+    angle_buf[angle_buf_pos] = atan2f(cv.ay, hor_dist);
+    angle_buf_pos = (angle_buf_pos + 1) % BUF_SMALL;
+    if(!angle_buf_full && (angle_buf_pos == 0)) {
+      angle_buf_full = true;
+    }
+  }
 
   if (update_buffers) {
     ax_buf[update_pos] = cv.ax;
@@ -149,12 +169,12 @@ float posture_check() {
   float hor_dist = 0.0f;
 
   // just calculate across first 25 samples if check_pos is 0 to avoid div by 0
-  int end_idx_init = (check_pos == 0) ? 25 : check_pos;
+  // int end_idx_init = (check_pos == 0) ? 25 : check_pos;
 
-  for (int i = 0; i < end_idx_init; i++) {
-    hor_dist = sqrtf(ax_buf[i] * ax_buf[i] + az_buf[i] * az_buf[i]);
-    tilt_init_sum += atan2f(ay_buf[i], hor_dist);
-  }
+  // for (int i = 0; i < end_idx_init; i++) {
+  //   hor_dist = sqrtf(ax_buf[i] * ax_buf[i] + az_buf[i] * az_buf[i]);
+  //   tilt_init_sum += atan2f(ay_buf[i], hor_dist);
+  // }
 
   int end_idx = min(BUF_SIZE, max_pos + BUF_SMALL);
 
@@ -163,11 +183,14 @@ float posture_check() {
     tilt_final_sum += atan2f(ay_buf[i], hor_dist);
   }
 
-  float avg_init = (RAD_TO_DEG_CONV * tilt_init_sum) / end_idx_init;
+  // float avg_init = (RAD_TO_DEG_CONV * tilt_init_sum) / end_idx_init;
   float avg_final = (RAD_TO_DEG_CONV * tilt_final_sum) / (end_idx - max_pos);
 
-  float tilt_diff = fabsf(avg_final - avg_init);
+  float tilt_diff = fabsf(avg_final - init_angle_latch);
   cv.fall_event_val = tilt_diff;
+  #if IMU_DEBUG
+    Serial.print("Angle difference: "); Serial.println(tilt_diff);
+  #endif 
   return tilt_diff;
 }
 
@@ -520,6 +543,24 @@ void handle_imu() {
       // Low acceleration suggests onset of free-fall, initialize values for
       // CHECK_FALL state
       if (cv.A_SVM <= IDLE_TRIGGER) {
+        // latch pre-impact angle
+        int angle_samples = angle_buf_full ? BUF_SMALL : angle_buf_pos;
+        float angle_sum = 0.0;
+        if(angle_samples > 0) {
+          for(int i = 0; i < angle_samples; i++) {
+            angle_sum += angle_buf[i];
+          }
+          init_angle_latch = (RAD_TO_DEG_CONV * angle_sum) / angle_samples;
+        }
+        else {
+          init_angle_latch = 0.0;
+        }
+
+        #if IMU_DEBUG
+          Serial.print("Pre-impact angle: "); Serial.println(init_angle_latch);
+        #endif
+
+        // reset data buffers
         update_pos = 0;
         check_pos = 0;
         max_pos = 0;
