@@ -108,3 +108,7 @@ fprintf('TP: %d\n', overall_TP);
 fprintf('TN: %d\n', overall_TN);
 fprintf('FP: %d\n', overall_FP);
 fprintf('FN: %d\n', overall_FN);
+fprintf('TP RATE: %.4f\n', 100*(overall_TP / (overall_TP + overall_FN)));
+fprintf('TN RATE: %.4f\n', 100*(overall_TN / (overall_FP + overall_TN)));
+fprintf('FP RATE: %.4f\n', 100*(overall_FP / (overall_FP + overall_TN)));
+fprintf('FN RATE: %.4f\n', 100*(overall_FN / (overall_FN + overall_TP)));
