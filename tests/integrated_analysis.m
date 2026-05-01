@@ -1,597 +1,264 @@
-%% Config
+%% Load, clean, and forward-fill BLE data paired with reference measurements
+clear; clc;
+filename = 'data/integrated_KH.csv';
+T = readtable(filename);
 
-csv_files = {'data/integrated_LD.csv'};
-participant_labels = {'LD'};
-% 
-% csv_files = {
-%     'data/integrated_P1.csv', ...
-%     'data/integrated_P2.csv', ...
-%     'data/integrated_P3.csv', ...
-% };
-% participant_labels = {'P1', 'P2', 'P3'};  % must match length of csv_files
+cols_wanted = {'time', 'activity_label', 'ble_hr', 'ble_spo2', 'ref_hr', 'ref_spo2'};
+T = T(:, cols_wanted);
 
-% Set to true to also save figures as .png
-save_figures = false;
-output_dir   = 'figures';
+T.ble_hr_filled   = fillmissing(T.ble_hr,   'linear');
+T.ble_spo2_filled = fillmissing(T.ble_spo2, 'linear');
 
-% Activity label groupings
-STILL_LABELS = {'PPG_WARMUP', 'BASELINE_STILL', 'RECOVERY_STILL'};
-MOVE_LABELS  = {'WALK_SLOW', 'WALK_FAST', 'RUN', ...
-                'JUMP_SINGLE', 'JUMP_REPEATED'};
-FALL_LABELS  = {'FALL_FORWARD', 'FALL_BACKWARD', 'FALL_SIDE'};
-SIT_LABELS   = {'SIT_QUICK'};
+has_ref = ~isnan(T.ref_hr) | ~isnan(T.ref_spo2);
+T_paired = T(has_ref, :);
 
-% Valid IMU states per activity label
-LABEL_TO_VALID_IMU = containers.Map();
-LABEL_TO_VALID_IMU('WALK_SLOW')     = {'WALKING'};
-LABEL_TO_VALID_IMU('WALK_FAST')     = {'WALKING'};
-LABEL_TO_VALID_IMU('RUN')           = {'RUNNING'};
-LABEL_TO_VALID_IMU('JUMP_SINGLE')   = {'JUMPING'};
-LABEL_TO_VALID_IMU('JUMP_REPEATED') = {'JUMPING'};
-LABEL_TO_VALID_IMU('FALL_FORWARD')  = {'DETECTED_FALL', 'STATIONARY_POST_FALL'};
-LABEL_TO_VALID_IMU('FALL_BACKWARD') = {'DETECTED_FALL', 'STATIONARY_POST_FALL'};
-LABEL_TO_VALID_IMU('FALL_SIDE')     = {'DETECTED_FALL', 'STATIONARY_POST_FALL'};
-LABEL_TO_VALID_IMU('SIT_QUICK')     = {'SITTING', 'SQUATTING'};
+T_final = table( ...
+    T_paired.time, ...
+    T_paired.activity_label, ...
+    T_paired.ble_hr_filled, ...
+    T_paired.ref_hr, ...
+    T_paired.ble_spo2_filled, ...
+    T_paired.ref_spo2, ...
+    'VariableNames', {'time','activity_label','ble_hr','ref_hr','ble_spo2','ref_spo2'});
 
-% Colors
-C_BLUE   = [0.20 0.40 0.75];
-C_ORANGE = [0.90 0.45 0.15];
-C_GREEN  = [0.20 0.65 0.35];
-C_RED    = [0.85 0.25 0.25];
-C_GRAY   = [0.55 0.55 0.55];
+still_nan = isnan(T_final.ble_hr) & isnan(T_final.ble_spo2);
+T_final(still_nan, :) = [];
 
-% Font / size — larger for paper figures
-fig_font     = 'Helvetica';
-fig_fontsize = 14;
-label_fontsize = 15;
+T_final(strcmp(T_final.activity_label, 'PPG_WARMUP'), :) = [];
 
-bins      = {'Still', 'Moving', 'Fall', 'Sit'};
-bin_order = {'Still', 'Moving', 'Fall', 'Sit', 'Other'};
-bin_cols  = {C_BLUE, C_ORANGE, C_RED, C_GREEN, C_GRAY};
+disp(head(T_final, 5));
+fprintf('Total paired rows: %d\n', height(T_final));
 
-win_order = {"PPG_WARMUP", "BASELINE_STILL", "WALK_SLOW", "WALK_FAST", ...
-             "RECOVERY_STILL", "RUN", "JUMP_SINGLE", "JUMP_REPEATED", ...
-             "FALL_FORWARD", "FALL_BACKWARD", "FALL_SIDE", "SIT_QUICK"};
-win_labels = {"Warmup", "Baseline", "Walk Slow", "Walk Fast", ...
-              "Recovery", "Run", "Jump Single", "Jump Repeat", ...
-              "Fall Fwd", "Fall Back", "Fall Side", "Sit"};
+FS = 14;
+LW = 1.5;
+C_STILL  = [0.20 0.40 0.75];
+C_MOVING = [0.85 0.25 0.25];
 
-if save_figures && ~exist(output_dir, 'dir')
-    mkdir(output_dir);
+% Pretty labels for figures
+pretty_map = containers.Map( ...
+    {'BASELINE_STILL','RECOVERY_STILL','SIT_QUICK','WALK_SLOW','WALK_FAST', ...
+     'RUN','JUMP_SINGLE','JUMP_REPEATED','FALL_FORWARD','FALL_BACKWARD','FALL_SIDE'}, ...
+    {'Still','Still','Sit','Slow Walk','Fast Walk', ...
+     'Run','Jump','Jumps','Fall Fwd','Fall Back','Fall Side'});
+pretty = @(x) pretty_map(x);
+
+
+%% HR scatter
+ref = T_final.ref_hr;
+ble = T_final.ble_hr;
+labels = T_final.activity_label;
+
+still_acts = {'BASELINE_STILL','RECOVERY_STILL'};
+is_still = ismember(labels, still_acts);
+
+mae_all    = mean(abs(ref - ble));
+mae_still  = mean(abs(ref(is_still)  - ble(is_still)));
+mae_moving = mean(abs(ref(~is_still) - ble(~is_still)));
+
+figure('Color','w','Position',[100 100 560 500]);
+scatter(ref(is_still),  ble(is_still),  55, 'o', 'MarkerFaceColor', C_STILL,  'MarkerEdgeColor','w'); hold on;
+scatter(ref(~is_still), ble(~is_still), 55, 'o', 'MarkerFaceColor', C_MOVING, 'MarkerEdgeColor','w');
+
+lims = [min([ref;ble])-5, max([ref;ble])+5];
+plot(lims, lims, '--', 'Color',[0.5 0.5 0.5], 'LineWidth', 1.2);
+
+xlabel('Reference HR (bpm)');
+ylabel('Measured HR (bpm)');
+legend({sprintf('Still (MAE = %.2f)', mae_still), ...
+        sprintf('Moving (MAE = %.2f)', mae_moving)}, 'Location','best', 'Box','off');
+axis equal; xlim(lims); ylim(lims); grid on;
+style_ax(gca, FS);
+
+
+%% SpO2 scatter
+ref = T_final.ref_spo2;
+ble = T_final.ble_spo2;
+labels = T_final.activity_label;
+
+is_still = ismember(labels, still_acts);
+
+mae_all    = mean(abs(ref - ble));
+mae_still  = mean(abs(ref(is_still)  - ble(is_still)));
+mae_moving = mean(abs(ref(~is_still) - ble(~is_still)));
+
+figure('Color','w','Position',[100 100 560 500]);
+scatter(ref(is_still),  ble(is_still),  55, 'o', 'MarkerFaceColor', C_STILL,  'MarkerEdgeColor','w'); hold on;
+scatter(ref(~is_still), ble(~is_still), 55, 'o', 'MarkerFaceColor', C_MOVING, 'MarkerEdgeColor','w');
+
+lims = [min([ref;ble])-1, max([ref;ble])+1];
+plot(lims, lims, '--', 'Color',[0.5 0.5 0.5], 'LineWidth', 1.2);
+
+xlabel('Reference SpO_{2} (%)');
+ylabel('Measured SpO_{2} (%)');
+legend({sprintf('Still (MAE = %.2f)', mae_still), ...
+        sprintf('Moving (MAE = %.2f)', mae_moving)}, 'Location','best', 'Box','off');
+axis equal; xlim(lims); ylim(lims); grid on;
+style_ax(gca, FS);
+
+
+%% Time series: ref vs measured HR and SpO2
+t = T_final.time;
+labels = T_final.activity_label;
+change_idx = [1; find(~strcmp(labels(1:end-1), labels(2:end))) + 1];
+change_times = t(change_idx);
+change_labels = cellfun(pretty, labels(change_idx), 'UniformOutput', false);
+
+figure('Color','w','Position',[100 100 1100 650]);
+
+subplot(2,1,1);
+plot(t, T_final.ref_hr, 'k-', 'LineWidth', LW); hold on;
+plot(t, T_final.ble_hr, '-', 'Color', C_MOVING, 'LineWidth', LW);
+for i = 1:numel(change_times)
+    xline(change_times(i), 'Color', [0.75 0.75 0.75]);
+end
+ylabel('HR (bpm)');
+legend({'Reference','Measured'}, 'Location','best', 'Box','off');
+xticks(change_times); xticklabels(change_labels);
+xtickangle(45);
+grid on;
+style_ax(gca, FS);
+
+subplot(2,1,2);
+plot(t, T_final.ref_spo2, 'k-', 'LineWidth', LW); hold on;
+plot(t, T_final.ble_spo2, '-', 'Color', C_STILL, 'LineWidth', LW);
+for i = 1:numel(change_times)
+    xline(change_times(i), 'Color', [0.75 0.75 0.75]);
+end
+ylabel('SpO_{2} (%)');
+legend({'Reference','Measured'}, 'Location','best', 'Box','off');
+xticks(change_times); xticklabels(change_labels);
+xtickangle(45);
+grid on;
+style_ax(gca, FS);
+
+%% Per-activity time series grid
+labels = T_final.activity_label;
+unique_acts = unique(labels, 'stable');
+n = numel(unique_acts);
+
+n_cols = 4;
+n_rows = ceil(n / n_cols);
+
+figure('Color','w','Position', [100 100 1000 600]);
+for i = 1:n
+    mask = strcmp(labels, unique_acts{i});
+    t_act   = T_final.time(mask);
+    t_act   = t_act - min(t_act);  % reset to start at 0
+    ref_act = T_final.ref_hr(mask);
+    ble_act = T_final.ble_hr(mask);
+    mae_act = mean(abs(ref_act - ble_act));
+
+    subplot(n_rows, n_cols, i);
+    plot(t_act, ref_act, 'k-', 'LineWidth', LW); hold on;
+    plot(t_act, ble_act, '-', 'Color', C_MOVING, 'LineWidth', LW);
+    title(sprintf('%s (MAE=%.1f)', pretty(unique_acts{i}), mae_act), ...
+        'FontWeight', 'normal', 'FontSize', FS-2);
+    xlabel('Time (s)');
+    ylabel('HR (bpm)');
+    grid on;
+    style_ax(gca, FS-2);
 end
 
-n_participants = numel(csv_files);
+ax_legend = subplot(n_rows, n_cols, n_rows * n_cols);
+hold(ax_legend, 'on');
+h1 = plot(ax_legend, NaN, NaN, 'k-', 'LineWidth', LW);
+h2 = plot(ax_legend, NaN, NaN, '-', 'Color', C_MOVING, 'LineWidth', LW);
+axis(ax_legend, 'off');
+legend(ax_legend, [h1 h2], {'Reference','Measured'}, ...
+    'Location', 'west', 'Box', 'off', 'FontSize', FS);
 
-% Pre-allocate pooled arrays
-all_paired_hr_ble   = [];
-all_paired_hr_ref   = [];
-all_paired_hr_bin   = {};
-all_paired_spo2_ble = [];
-all_paired_spo2_ref = [];
-all_paired_spo2_bin = {};
 
-all_imu_correct = 0;
-all_imu_total   = 0;
+%% MAE summary
+fprintf('HR   MAE: %.2f bpm\n', mean(abs(T_final.ref_hr - T_final.ble_hr)));
+fprintf('SpO2 MAE: %.2f %%\n\n', mean(abs(T_final.ref_spo2 - T_final.ble_spo2)));
 
-% Heatmap accumulator (pooled)
-row_order  = {"STILL", "SIT_QUICK", "WALK", "RUN", "JUMP", "FALL"};
-row_labels = {"Still", "Sit", "Walk", "Run", "Jump", "Fall"};
-col_order  = {"SITTING", "WALKING", "RUNNING", "JUMPING", "FALL_DETECTED", "LIMPING"};
-col_labels = {"Sitting", "Walking", "Running", "Jumping", "Fall Detected", "Limping"};
-n_rows = numel(row_order);
-n_cols = numel(col_order);
-hmap_counts_all = zeros(n_rows, n_cols);
+act_map = containers.Map( ...
+    {'BASELINE_STILL','RECOVERY_STILL','SIT_QUICK','WALK_SLOW','WALK_FAST', ...
+     'RUN','JUMP_SINGLE','JUMP_REPEATED','FALL_FORWARD','FALL_BACKWARD','FALL_SIDE'}, ...
+    {'STILL','STILL','SIT','WALK','WALK','RUN','JUMP','JUMP','FALL','FALL','FALL'});
 
-% Per-participant summary storage
-summary = struct();
+simple = cellfun(@(a) act_map(a), T_final.activity_label, 'UniformOutput', false);
 
-%% Loop over participants
+cats = {'STILL','SIT','WALK','RUN','JUMP','FALL'};
+fprintf('%-10s %8s %10s %12s\n', 'Activity', 'N', 'HR MAE', 'SpO2 MAE');
+fprintf('%s\n', repmat('-', 1, 42));
+for i = 1:numel(cats)
+    m = strcmp(simple, cats{i});
+    fprintf('%-10s %8d %10.2f %12.2f\n', cats{i}, sum(m), ...
+        mean(abs(T_final.ref_hr(m)   - T_final.ble_hr(m))), ...
+        mean(abs(T_final.ref_spo2(m) - T_final.ble_spo2(m))));
+end
 
-for p = 1:n_participants
-    pid   = participant_labels{p};
-    fname = csv_files{p};
 
-    fprintf('\n%s  (%s)\n', pid, fname);
+%% IMU preprocessing
+T_imu = readtable(filename);
+T_imu = T_imu(:, {'time', 'activity_label', 'imu_state'});
 
-    T = readtable(fname, 'Delimiter', ',', 'TextType', 'string');
+T_imu(strcmp(T_imu.activity_label, 'PPG_WARMUP'), :) = [];
 
-    num_cols = {'ble_hr', 'ble_spo2', 'ref_hr', 'ref_spo2', ...
-                'imu_event_val', 'imu_impact', 'ble_rr', ...
-                'ble_sbp', 'ble_dbp', 'ble_vbat'};
-    for i = 1:numel(num_cols)
-        col = num_cols{i};
-        if ismember(col, T.Properties.VariableNames)
-            if isstring(T.(col)) || iscellstr(T.(col))
-                T.(col) = str2double(T.(col));
-            end
+still_acts = {'BASELINE_STILL','RECOVERY_STILL'};
+keep = ~cellfun(@isempty, T_imu.imu_state) | ismember(T_imu.activity_label, still_acts);
+T_imu = T_imu(keep, :);
+
+
+%% Confusion matrix
+act_map = containers.Map( ...
+    {'BASELINE_STILL','RECOVERY_STILL','SIT_QUICK','WALK_SLOW','WALK_FAST', ...
+     'RUN','JUMP_SINGLE','JUMP_REPEATED','FALL_FORWARD','FALL_BACKWARD','FALL_SIDE'}, ...
+    {'STILL','STILL','SIT','WALK','WALK','RUN','JUMP','JUMP','FALL','FALL','FALL'});
+
+imu_map = containers.Map( ...
+    {'','WALKING','RUNNING','JUMPING','SITTING','SQUATTING','LIMPING','DETECTED_FALL'}, ...
+    {'STILL','WALK','RUN','JUMP','SIT','SIT','LIMP','FALL'});
+
+row_cats = {'STILL','SIT','WALK','RUN','JUMP','FALL'};
+col_cats = {'STILL','SIT','WALK','RUN','JUMP','FALL','LIMP'};
+row_pretty = {'Still','Sit','Walk','Run','Jump','Fall'};
+col_pretty = {'Still','Sit','Walk','Run','Jump','Fall','Limp'};
+nr = numel(row_cats);
+nc = numel(col_cats);
+cm = zeros(nr, nc);
+
+for i = 1:height(T_imu)
+    if ~isKey(act_map, T_imu.activity_label{i}) || ~isKey(imu_map, T_imu.imu_state{i})
+        continue
+    end
+    r = find(strcmp(row_cats, act_map(T_imu.activity_label{i})));
+    c = find(strcmp(col_cats, imu_map(T_imu.imu_state{i})));
+    if ~isempty(r) && ~isempty(c)
+        cm(r, c) = cm(r, c) + 1;
+    end
+end
+
+cm_norm = cm ./ max(sum(cm, 2), 1) * 100;
+
+figure('Color','w','Position',[100 100 750 600]);
+imagesc(cm_norm); hold on;
+colormap(sky);
+cb = colorbar;
+cb.Label.String = '% of activity packets';
+cb.Label.FontSize = FS;
+clim([0 100]);
+xticks(1:nc); yticks(1:nr);
+xticklabels(col_pretty); yticklabels(row_pretty);
+xlabel('Reported IMU State'); ylabel('Actual Activity');
+
+for r = 1:nr
+    for c = 1:nc
+        if cm(r,c) > 0
+            col = 'k'; if cm_norm(r,c) > 50, col = 'w'; end
+            text(c, r, sprintf('%.0f%%', cm_norm(r,c)), ...
+                'HorizontalAlignment','center', 'Color', col, ...
+                'FontSize', FS-1);
         end
     end
-    T.time = T.time - T.time(1);
-    fprintf('Loaded %d rows\n', height(T));
+end
+style_ax(gca, FS);
 
-    % Pair HR & SpO2
-    paired_hr_ble   = [];  paired_hr_ref   = [];  paired_hr_bin   = {};
-    paired_spo2_ble = [];  paired_spo2_ref = [];  paired_spo2_bin = {};
-    paired_hr_t     = [];  paired_spo2_t   = [];
 
-    for w = 1:numel(win_order)
-        lbl_char = char(win_order{w});
-        mask     = T.activity_label == win_order{w};
-
-        if     ismember(lbl_char, STILL_LABELS), bin_name = 'Still';
-        elseif ismember(lbl_char, MOVE_LABELS),  bin_name = 'Moving';
-        elseif ismember(lbl_char, FALL_LABELS),  bin_name = 'Fall';
-        elseif ismember(lbl_char, SIT_LABELS),   bin_name = 'Sit';
-        else,                                    bin_name = 'Other';
-        end
-
-        ble_hr_rows   = find(mask & ~isnan(T.ble_hr)   & T.ble_hr   > 0);
-        ble_spo2_rows = find(mask & ~isnan(T.ble_spo2) & T.ble_spo2 > 0);
-        ref_hr_rows   = find(mask & ~isnan(T.ref_hr)   & T.ref_hr   > 0);
-        ref_spo2_rows = find(mask & ~isnan(T.ref_spo2) & T.ref_spo2 > 0);
-
-        for i = 1:numel(ref_hr_rows)
-            if isempty(ble_hr_rows), continue; end
-            t_ref = T.time(ref_hr_rows(i));
-            [~, j] = min(abs(T.time(ble_hr_rows) - t_ref));
-            paired_hr_ref(end+1)  = T.ref_hr(ref_hr_rows(i));   %#ok<SAGROW>
-            paired_hr_ble(end+1)  = T.ble_hr(ble_hr_rows(j));   %#ok<SAGROW>
-            paired_hr_bin{end+1}  = bin_name;                    %#ok<SAGROW>
-            paired_hr_t(end+1)    = t_ref;                       %#ok<SAGROW>
-        end
-
-        for i = 1:numel(ref_spo2_rows)
-            if isempty(ble_spo2_rows), continue; end
-            t_ref = T.time(ref_spo2_rows(i));
-            [~, j] = min(abs(T.time(ble_spo2_rows) - t_ref));
-            paired_spo2_ref(end+1)  = T.ref_spo2(ref_spo2_rows(i)); %#ok<SAGROW>
-            paired_spo2_ble(end+1)  = T.ble_spo2(ble_spo2_rows(j)); %#ok<SAGROW>
-            paired_spo2_bin{end+1}  = bin_name;                      %#ok<SAGROW>
-            paired_spo2_t(end+1)    = t_ref;                         %#ok<SAGROW>
-        end
-    end
-
-    hr_pair_errors   = paired_hr_ble   - paired_hr_ref;
-    spo2_pair_errors = paired_spo2_ble - paired_spo2_ref;
-    mae_hr   = mean(abs(hr_pair_errors));
-    mae_spo2 = mean(abs(spo2_pair_errors));
-
-    fprintf('HR   MAE: %.2f bpm  (n=%d)\n', mae_hr,   numel(paired_hr_ref));
-    fprintf('SpO2 MAE: %.2f %%    (n=%d)\n', mae_spo2, numel(paired_spo2_ref));
-
-    hr_mae_per_bin   = nan(1, numel(bins));
-    spo2_mae_per_bin = nan(1, numel(bins));
-    for b = 1:numel(bins)
-        hm = strcmp(paired_hr_bin,   bins{b});
-        sm = strcmp(paired_spo2_bin, bins{b});
-        if any(hm), hr_mae_per_bin(b)   = mean(abs(hr_pair_errors(hm)));   end
-        if any(sm), spo2_mae_per_bin(b) = mean(abs(spo2_pair_errors(sm))); end
-    end
-
-    fprintf('%-10s  HR MAE (bpm)  SpO2 MAE (%%)\n', 'Activity');
-    for b = 1:numel(bins)
-        fprintf('%-10s  %12.2f  %12.2f\n', bins{b}, hr_mae_per_bin(b), spo2_mae_per_bin(b));
-    end
-    fprintf('%-10s  %12.2f  %12.2f\n', 'Overall', mae_hr, mae_spo2);
-
-    % IMU classification
-    imu_rows = T(T.imu_state ~= "" & ~ismissing(T.imu_state), :);
-    n_correct = 0;  n_total = 0;
-
-    imu_labels_raw = unique(imu_rows.activity_label, 'stable');
-    for k = 1:numel(imu_labels_raw)
-        lbl_char = char(imu_labels_raw(k));
-        if ~LABEL_TO_VALID_IMU.isKey(lbl_char), continue; end
-        mask_k   = imu_rows.activity_label == imu_labels_raw(k);
-        states_k = imu_rows.imu_state(mask_k);
-        valid    = LABEL_TO_VALID_IMU(lbl_char);
-        n_correct = n_correct + sum(ismember(states_k, valid));
-        n_total   = n_total   + numel(states_k);
-    end
-    imu_acc = n_correct / max(n_total, 1) * 100;
-    fprintf('IMU accuracy: %.1f%%  (%d / %d)\n', imu_acc, n_correct, n_total);
-
-    % Heatmap (per participant)
-    imu_rows.merged_activity = imu_rows.activity_label;
-    imu_rows.merged_activity(ismember(imu_rows.merged_activity, ...
-        ["PPG_WARMUP","BASELINE_STILL","RECOVERY_STILL"])) = "STILL";
-    imu_rows.merged_activity(ismember(imu_rows.merged_activity, ...
-        ["WALK_SLOW","WALK_FAST"])) = "WALK";
-    imu_rows.merged_activity(ismember(imu_rows.merged_activity, ...
-        ["JUMP_SINGLE","JUMP_REPEATED"])) = "JUMP";
-    imu_rows.merged_activity(ismember(imu_rows.merged_activity, ...
-        ["FALL_FORWARD","FALL_BACKWARD","FALL_SIDE"])) = "FALL";
-
-    imu_rows.merged_state = imu_rows.imu_state;
-    imu_rows.merged_state(ismember(imu_rows.merged_state, ...
-        ["DETECTED_FALL","STATIONARY_POST_FALL"])) = "FALL_DETECTED";
-    imu_rows.merged_state(ismember(imu_rows.merged_state, ...
-        ["SITTING","SQUATTING"])) = "SITTING";
-
-    hmap_p = zeros(n_rows, n_cols);
-    for r = 1:n_rows
-        mask_r   = imu_rows.merged_activity == row_order{r};
-        states_r = imu_rows.merged_state(mask_r);
-        for c = 1:n_cols
-            hmap_p(r, c) = sum(states_r == col_order{c});
-        end
-    end
-    hmap_counts_all = hmap_counts_all + hmap_p;
-
-    % Store summary and accumulate pooled
-    summary(p).pid              = pid;
-    summary(p).mae_hr           = mae_hr;
-    summary(p).mae_spo2         = mae_spo2;
-    summary(p).imu_acc          = imu_acc;
-    summary(p).hr_mae_per_bin   = hr_mae_per_bin;
-    summary(p).spo2_mae_per_bin = spo2_mae_per_bin;
-    summary(p).paired_hr_ble    = paired_hr_ble;
-    summary(p).paired_hr_ref    = paired_hr_ref;
-    summary(p).paired_hr_bin    = paired_hr_bin;
-    summary(p).paired_spo2_ble  = paired_spo2_ble;
-    summary(p).paired_spo2_ref  = paired_spo2_ref;
-    summary(p).paired_spo2_bin  = paired_spo2_bin;
-    summary(p).hmap_counts      = hmap_p;
-
-    % Accumulate for pooled
-    all_paired_hr_ble   = [all_paired_hr_ble   paired_hr_ble];   %#ok<AGROW>
-    all_paired_hr_ref   = [all_paired_hr_ref   paired_hr_ref];   %#ok<AGROW>
-    all_paired_hr_bin   = [all_paired_hr_bin   paired_hr_bin];   %#ok<AGROW>
-    all_paired_spo2_ble = [all_paired_spo2_ble paired_spo2_ble]; %#ok<AGROW>
-    all_paired_spo2_ref = [all_paired_spo2_ref paired_spo2_ref]; %#ok<AGROW>
-    all_paired_spo2_bin = [all_paired_spo2_bin paired_spo2_bin]; %#ok<AGROW>
-    all_imu_correct     = all_imu_correct + n_correct;
-    all_imu_total       = all_imu_total   + n_total;
-
-    % Per-participant figures
-
-    % HR correlation scatter
-    f = figure('Position', [100 100 500 460], 'Color', 'w');
-    ax = axes('Parent', f);  hold(ax, 'on');
-    for b = 1:numel(bin_order)
-        idx = strcmp(paired_hr_bin, bin_order{b});
-        if any(idx)
-            scatter(ax, paired_hr_ref(idx), paired_hr_ble(idx), 55, ...
-                'o', 'MarkerFaceColor', bin_cols{b}, 'MarkerEdgeColor', 'w', ...
-                'MarkerFaceAlpha', 0.85, 'LineWidth', 0.5, 'DisplayName', bin_order{b});
-        end
-    end
-    all_hr = [paired_hr_ref paired_hr_ble];
-    lims = [min(all_hr)-5, max(all_hr)+5];
-    plot(ax, lims, lims, '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    xlabel(ax, 'Reference HR (bpm)', 'FontSize', label_fontsize);
-    ylabel(ax, 'Measured HR (bpm)',  'FontSize', label_fontsize);
-    % title(ax, sprintf('%s — HR Correlation: Measured vs Reference', pid), 'FontWeight', 'bold');  % commented out for paper
-    legend(ax, 'Location', 'eastoutside', 'Box', 'off', 'FontSize', fig_fontsize);
-    axis(ax, 'equal');  xlim(ax, lims);  ylim(ax, lims);
-    grid(ax, 'on');  ax.GridAlpha = 0.15;  ax.GridLineStyle = ':';
-    style_ax(ax, fig_fontsize);
-    cc = corrcoef(paired_hr_ref, paired_hr_ble);
-    r2 = cc(1,2)^2;
-    text(ax, lims(1)+0.03*range(lims), lims(2)-0.03*range(lims), ...
-        sprintf('R^2 = %.3f,  MAE = %.1f bpm', r2, mae_hr), ...
-        'FontSize', fig_fontsize-1, 'FontName', fig_font, 'VerticalAlignment', 'top', ...
-        'BackgroundColor', 'w', 'EdgeColor', [0.8 0.8 0.8], 'Margin', 3);
-    if save_figures
-        saveas(f, fullfile(output_dir, sprintf('%s_hr_corr.png', pid)));
-    end
-
-    % SpO2 correlation scatter
-    f = figure('Position', [100 100 500 460], 'Color', 'w');
-    ax = axes('Parent', f);  hold(ax, 'on');
-    for b = 1:numel(bin_order)
-        idx = strcmp(paired_spo2_bin, bin_order{b});
-        if any(idx)
-            scatter(ax, paired_spo2_ref(idx), paired_spo2_ble(idx), 55, ...
-                'o', 'MarkerFaceColor', bin_cols{b}, 'MarkerEdgeColor', 'w', ...
-                'MarkerFaceAlpha', 0.85, 'LineWidth', 0.5, 'DisplayName', bin_order{b});
-        end
-    end
-    all_spo2 = [paired_spo2_ref paired_spo2_ble];
-    lims_s = [min(all_spo2)-max(1,range(all_spo2)*0.1), max(all_spo2)+max(1,range(all_spo2)*0.1)];
-    plot(ax, lims_s, lims_s, '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    xlabel(ax, 'Reference SpO_{2} (%)',  'FontSize', label_fontsize);
-    ylabel(ax, 'Measured SpO_{2} (%)',   'FontSize', label_fontsize);
-    % title(ax, sprintf('%s — SpO2 Correlation: Measured vs Reference', pid), 'FontWeight', 'bold');  % commented out for paper
-    legend(ax, 'Location', 'eastoutside', 'Box', 'off', 'FontSize', fig_fontsize);
-    axis(ax, 'equal');  xlim(ax, lims_s);  ylim(ax, lims_s);
-    grid(ax, 'on');  ax.GridAlpha = 0.15;  ax.GridLineStyle = ':';
-    style_ax(ax, fig_fontsize);
-    cc_s = corrcoef(paired_spo2_ref, paired_spo2_ble);
-    r2_s = cc_s(1,2)^2;
-    text(ax, lims_s(1)+0.03*range(lims_s), lims_s(2)-0.03*range(lims_s), ...
-        sprintf('R^2 = %.3f,  MAE = %.1f %%', r2_s, mae_spo2), ...
-        'FontSize', fig_fontsize-1, 'FontName', fig_font, 'VerticalAlignment', 'top', ...
-        'BackgroundColor', 'w', 'EdgeColor', [0.8 0.8 0.8], 'Margin', 3);
-    if save_figures
-        saveas(f, fullfile(output_dir, sprintf('%s_spo2_corr.png', pid)));
-    end
-
-    % IMU heatmap
-    hmap_pct_p = hmap_p ./ max(sum(hmap_p, 2), 1) * 100;
-    f = figure('Position', [100 100 800 500], 'Color', 'w');
-    imagesc(hmap_pct_p);  colormap(sky);
-    cb = colorbar;
-    cb.Label.String   = '% of activity packets';
-    cb.Label.FontSize = fig_fontsize;
-    clim([0 100]);
-    set(gca, 'XTick', 1:n_cols, 'XTickLabel', col_labels, 'XTickLabelRotation', 35, ...
-             'YTick', 1:n_rows, 'YTickLabel', row_labels, 'TickLabelInterpreter', 'none');
-    hold on;
-    plot([0.5 n_cols+0.5], [1.5 1.5], '--', 'Color', [0.5 0.5 0.5], 'LineWidth', 1.2);
-    xlabel('Reported IMU State',  'FontSize', label_fontsize);
-    ylabel('Protocol Activity',   'FontSize', label_fontsize);
-    % title(sprintf('%s — IMU State Distribution per Activity', pid), 'FontWeight', 'bold');  % commented out for paper
-    style_ax(gca, fig_fontsize);
-    annotate_heatmap(hmap_p, hmap_pct_p, n_rows, n_cols, fig_font, fig_fontsize);
-    if save_figures
-        saveas(f, fullfile(output_dir, sprintf('%s_imu_heatmap.png', pid)));
-    end
-
-end  % participant loop
-
-%% Pooled overall figures (skipped when only one participant)
-
-if n_participants > 1
-
-    fprintf('\nPooled overall\n');
-
-    all_hr_errors   = all_paired_hr_ble   - all_paired_hr_ref;
-    all_spo2_errors = all_paired_spo2_ble - all_paired_spo2_ref;
-    mae_hr_all      = mean(abs(all_hr_errors));
-    mae_spo2_all    = mean(abs(all_spo2_errors));
-    imu_acc_all     = all_imu_correct / max(all_imu_total, 1) * 100;
-
-    fprintf('HR   MAE: %.2f bpm  (n=%d)\n', mae_hr_all,   numel(all_paired_hr_ref));
-    fprintf('SpO2 MAE: %.2f %%    (n=%d)\n', mae_spo2_all, numel(all_paired_spo2_ref));
-    fprintf('IMU accuracy: %.1f%%  (%d / %d)\n', imu_acc_all, all_imu_correct, all_imu_total);
-
-    % Per-bin MAE (pooled)
-    hr_mae_all_bin   = nan(1, numel(bins));
-    spo2_mae_all_bin = nan(1, numel(bins));
-    for b = 1:numel(bins)
-        hm = strcmp(all_paired_hr_bin,   bins{b});
-        sm = strcmp(all_paired_spo2_bin, bins{b});
-        if any(hm), hr_mae_all_bin(b)   = mean(abs(all_hr_errors(hm)));   end
-        if any(sm), spo2_mae_all_bin(b) = mean(abs(all_spo2_errors(sm))); end
-    end
-
-    fprintf('%-10s  HR MAE (bpm)  SpO2 MAE (%%)\n', 'Activity');
-    for b = 1:numel(bins)
-        fprintf('%-10s  %12.2f  %12.2f\n', bins{b}, hr_mae_all_bin(b), spo2_mae_all_bin(b));
-    end
-    fprintf('%-10s  %12.2f  %12.2f\n', 'Overall', mae_hr_all, mae_spo2_all);
-
-    % Pooled HR correlation
-    f = figure('Position', [100 100 500 460], 'Color', 'w');
-    ax = axes('Parent', f);  hold(ax, 'on');
-    for b = 1:numel(bin_order)
-        idx = strcmp(all_paired_hr_bin, bin_order{b});
-        if any(idx)
-            scatter(ax, all_paired_hr_ref(idx), all_paired_hr_ble(idx), 55, ...
-                'o', 'MarkerFaceColor', bin_cols{b}, 'MarkerEdgeColor', 'w', ...
-                'MarkerFaceAlpha', 0.75, 'LineWidth', 0.5, 'DisplayName', bin_order{b});
-        end
-    end
-    all_hr = [all_paired_hr_ref all_paired_hr_ble];
-    lims = [min(all_hr)-5, max(all_hr)+5];
-    plot(ax, lims, lims, '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    xlabel(ax, 'Reference HR (bpm)', 'FontSize', label_fontsize);
-    ylabel(ax, 'Measured HR (bpm)',  'FontSize', label_fontsize);
-    % title(ax, 'Pooled — HR Correlation: Measured vs Reference', 'FontWeight', 'bold');  % commented out for paper
-    legend(ax, 'Location', 'eastoutside', 'Box', 'off', 'FontSize', fig_fontsize);
-    axis(ax, 'equal');  xlim(ax, lims);  ylim(ax, lims);
-    grid(ax, 'on');  ax.GridAlpha = 0.15;  ax.GridLineStyle = ':';
-    style_ax(ax, fig_fontsize);
-    cc = corrcoef(all_paired_hr_ref, all_paired_hr_ble);
-    r2 = cc(1,2)^2;
-    text(ax, lims(1)+0.03*range(lims), lims(2)-0.03*range(lims), ...
-        sprintf('R^2 = %.3f,  MAE = %.1f bpm', r2, mae_hr_all), ...
-        'FontSize', fig_fontsize-1, 'FontName', fig_font, 'VerticalAlignment', 'top', ...
-        'BackgroundColor', 'w', 'EdgeColor', [0.8 0.8 0.8], 'Margin', 3);
-    if save_figures
-        saveas(f, fullfile(output_dir, 'pooled_hr_corr.png'));
-    end
-
-    % Pooled SpO2 correlation
-    f = figure('Position', [100 100 500 460], 'Color', 'w');
-    ax = axes('Parent', f);  hold(ax, 'on');
-    for b = 1:numel(bin_order)
-        idx = strcmp(all_paired_spo2_bin, bin_order{b});
-        if any(idx)
-            scatter(ax, all_paired_spo2_ref(idx), all_paired_spo2_ble(idx), 55, ...
-                'o', 'MarkerFaceColor', bin_cols{b}, 'MarkerEdgeColor', 'w', ...
-                'MarkerFaceAlpha', 0.75, 'LineWidth', 0.5, 'DisplayName', bin_order{b});
-        end
-    end
-    all_spo2 = [all_paired_spo2_ref all_paired_spo2_ble];
-    lims_s = [min(all_spo2)-max(1,range(all_spo2)*0.1), max(all_spo2)+max(1,range(all_spo2)*0.1)];
-    plot(ax, lims_s, lims_s, '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 1.2, 'HandleVisibility', 'off');
-    xlabel(ax, 'Reference SpO_{2} (%)',  'FontSize', label_fontsize);
-    ylabel(ax, 'Measured SpO_{2} (%)',   'FontSize', label_fontsize);
-    % title(ax, 'Pooled — SpO2 Correlation: Measured vs Reference', 'FontWeight', 'bold');  % commented out for paper
-    legend(ax, 'Location', 'eastoutside', 'Box', 'off', 'FontSize', fig_fontsize);
-    axis(ax, 'equal');  xlim(ax, lims_s);  ylim(ax, lims_s);
-    grid(ax, 'on');  ax.GridAlpha = 0.15;  ax.GridLineStyle = ':';
-    style_ax(ax, fig_fontsize);
-    cc_s = corrcoef(all_paired_spo2_ref, all_paired_spo2_ble);
-    r2_s = cc_s(1,2)^2;
-    text(ax, lims_s(1)+0.03*range(lims_s), lims_s(2)-0.03*range(lims_s), ...
-        sprintf('R^2 = %.3f,  MAE = %.1f %%', r2_s, mae_spo2_all), ...
-        'FontSize', fig_fontsize-1, 'FontName', fig_font, 'VerticalAlignment', 'top', ...
-        'BackgroundColor', 'w', 'EdgeColor', [0.8 0.8 0.8], 'Margin', 3);
-    if save_figures
-        saveas(f, fullfile(output_dir, 'pooled_spo2_corr.png'));
-    end
-
-    % Pooled IMU heatmap
-    hmap_pct_all = hmap_counts_all ./ max(sum(hmap_counts_all, 2), 1) * 100;
-    f = figure('Position', [100 100 800 500], 'Color', 'w');
-    imagesc(hmap_pct_all);  colormap(sky);
-    cb = colorbar;
-    cb.Label.String   = '% of activity packets';
-    cb.Label.FontSize = fig_fontsize;
-    clim([0 100]);
-    set(gca, 'XTick', 1:n_cols, 'XTickLabel', col_labels, 'XTickLabelRotation', 35, ...
-             'YTick', 1:n_rows, 'YTickLabel', row_labels, 'TickLabelInterpreter', 'none');
-    hold on;
-    plot([0.5 n_cols+0.5], [1.5 1.5], '--', 'Color', [0.5 0.5 0.5], 'LineWidth', 1.2);
-    xlabel('Reported IMU State', 'FontSize', label_fontsize);
-    ylabel('Protocol Activity',  'FontSize', label_fontsize);
-    % title('Pooled — IMU State Distribution per Activity', 'FontWeight', 'bold');  % commented out for paper
-    style_ax(gca, fig_fontsize);
-    annotate_heatmap(hmap_counts_all, hmap_pct_all, n_rows, n_cols, fig_font, fig_fontsize);
-    if save_figures
-        saveas(f, fullfile(output_dir, 'pooled_imu_heatmap.png'));
-    end
-
-    % Summary table
-
-    fprintf('\nSummary\n');
-    fprintf('%-6s  %12s  %13s  %12s\n', 'ID', 'HR MAE (bpm)', 'SpO2 MAE (%)', 'IMU Acc (%)');
-    for p = 1:n_participants
-        fprintf('%-6s  %12.2f  %13.2f  %12.1f\n', ...
-            summary(p).pid, summary(p).mae_hr, summary(p).mae_spo2, summary(p).imu_acc);
-    end
-    fprintf('%-6s  %12.2f  %13.2f  %12.1f\n', 'ALL', mae_hr_all, mae_spo2_all, imu_acc_all);
-
-end  % n_participants > 1
-
-fprintf('\nDone.\n');
-    
-%% Estimated vs true HR and SpO2 across activity windows
-
-    % Sort paired arrays by time, then use sample index (1..N) on x-axis
-    [paired_hr_t_sorted,   hr_sort_idx]   = sort(paired_hr_t);
-    paired_hr_ref_sorted  = paired_hr_ref(hr_sort_idx);
-    paired_hr_ble_sorted  = paired_hr_ble(hr_sort_idx);
-
-    [paired_spo2_t_sorted, spo2_sort_idx] = sort(paired_spo2_t);
-    paired_spo2_ref_sorted = paired_spo2_ref(spo2_sort_idx);
-    paired_spo2_ble_sorted = paired_spo2_ble(spo2_sort_idx);
-
-    hr_idx   = 1:numel(paired_hr_t_sorted);
-    spo2_idx = 1:numel(paired_spo2_t_sorted);
-
-    % Figure out which sample indices correspond to each activity label
-    hr_win_centers = [];  hr_win_edges = [];  hr_win_ticks = {};
-    for w = 1:numel(win_order)
-        mask_w = T.activity_label == win_order{w};
-        if ~any(mask_w), continue; end
-        t_start = min(T.time(mask_w));
-        t_end   = max(T.time(mask_w));
-
-        in_win = paired_hr_t_sorted >= t_start & paired_hr_t_sorted <= t_end;
-        if ~any(in_win), continue; end
-
-        first_i = find(in_win, 1, 'first');
-        last_i  = find(in_win, 1, 'last');
-        hr_win_centers(end+1) = (first_i + last_i) / 2;       %#ok<SAGROW>
-        hr_win_edges(end+1)   = last_i + 0.5;                 %#ok<SAGROW>
-        hr_win_ticks{end+1}   = win_labels{w};                %#ok<SAGROW>
-    end
-
-    % Sort ticks by position (protocol order != chronological order)
-    [hr_win_centers, hr_sort_tick] = sort(hr_win_centers);
-    hr_win_edges  = sort(hr_win_edges);
-    hr_win_ticks  = hr_win_ticks(hr_sort_tick);
-
-    spo2_win_centers = [];  spo2_win_edges = [];  spo2_win_ticks = {};
-    for w = 1:numel(win_order)
-        mask_w = T.activity_label == win_order{w};
-        if ~any(mask_w), continue; end
-        t_start = min(T.time(mask_w));
-        t_end   = max(T.time(mask_w));
-
-        in_win = paired_spo2_t_sorted >= t_start & paired_spo2_t_sorted <= t_end;
-        if ~any(in_win), continue; end
-
-        first_i = find(in_win, 1, 'first');
-        last_i  = find(in_win, 1, 'last');
-        spo2_win_centers(end+1) = (first_i + last_i) / 2;     %#ok<SAGROW>
-        spo2_win_edges(end+1)   = last_i + 0.5;               %#ok<SAGROW>
-        spo2_win_ticks{end+1}   = win_labels{w};              %#ok<SAGROW>
-    end
-
-    [spo2_win_centers, spo2_sort_tick] = sort(spo2_win_centers);
-    spo2_win_edges = sort(spo2_win_edges);
-    spo2_win_ticks = spo2_win_ticks(spo2_sort_tick);
-
-    % Line styles: solid for both, thinner lines, smaller markers
-    ref_color = [0 0 0];                 % black
-    meas_color = [0.85 0.25 0.25];       % red (C_RED)
-    ref_line_w  = 1.0;
-    meas_line_w = 1.0;
-    marker_sz   = 2.5;
-
-    f = figure('Position', [100 100 900 600], 'Color', 'w');
-
-    % HR subplot
-    ax1 = subplot(2,1,1);  hold(ax1, 'on');
-    plot(ax1, hr_idx, paired_hr_ref_sorted, '-o', ...
-        'Color', ref_color, 'MarkerFaceColor', ref_color, ...
-        'LineWidth', ref_line_w, 'MarkerSize', marker_sz, ...
-        'DisplayName', 'Reference HR');
-    plot(ax1, hr_idx, paired_hr_ble_sorted, '-s', ...
-        'Color', meas_color, 'MarkerFaceColor', meas_color, ...
-        'LineWidth', meas_line_w, 'MarkerSize', marker_sz, ...
-        'DisplayName', 'Measured HR');
-    for e = 1:numel(hr_win_edges)-1
-        xline(ax1, hr_win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
-            'HandleVisibility', 'off');
-    end
-    ylabel(ax1, 'Heart Rate (bpm)', 'FontSize', label_fontsize);
-    legend(ax1, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
-    grid(ax1, 'on');  ax1.GridAlpha = 0.15;  ax1.GridLineStyle = ':';
-    style_ax(ax1, fig_fontsize);
-    set(ax1, 'XTick', hr_win_centers, 'XTickLabel', hr_win_ticks, ...
-             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
-    xlim(ax1, [0.5 numel(hr_idx)+0.5]);
-
-    % SpO2 subplot
-    ax2 = subplot(2,1,2);  hold(ax2, 'on');
-    plot(ax2, spo2_idx, paired_spo2_ref_sorted, '-o', ...
-        'Color', ref_color, 'MarkerFaceColor', ref_color, ...
-        'LineWidth', ref_line_w, 'MarkerSize', marker_sz, ...
-        'DisplayName', 'Reference SpO_{2}');
-    plot(ax2, spo2_idx, paired_spo2_ble_sorted, '-s', ...
-        'Color', meas_color, 'MarkerFaceColor', meas_color, ...
-        'LineWidth', meas_line_w, 'MarkerSize', marker_sz, ...
-        'DisplayName', 'Measured SpO_{2}');
-    for e = 1:numel(spo2_win_edges)-1
-        xline(ax2, spo2_win_edges(e), ':', 'Color', [0.7 0.7 0.7], ...
-            'HandleVisibility', 'off');
-    end
-    ylabel(ax2, 'SpO_{2} (%)', 'FontSize', label_fontsize);
-    legend(ax2, 'Location', 'best', 'Box', 'off', 'FontSize', fig_fontsize);
-    grid(ax2, 'on');  ax2.GridAlpha = 0.15;  ax2.GridLineStyle = ':';
-    style_ax(ax2, fig_fontsize);
-    set(ax2, 'XTick', spo2_win_centers, 'XTickLabel', spo2_win_ticks, ...
-             'XTickLabelRotation', 35, 'TickLabelInterpreter', 'none');
-    xlim(ax2, [0.5 numel(spo2_idx)+0.5]);
-
-    if save_figures
-        saveas(f, fullfile(output_dir, sprintf('%s_hr_spo2_vs_window.png', pid)));
-    end
-
-%% Helpers
-
+%% Helper
 function style_ax(ax, fsz)
     set(ax, 'FontName', 'Helvetica', 'FontSize', fsz, ...
         'Box', 'off', 'TickDir', 'out', 'LineWidth', 1.0, ...
         'Color', 'w', 'XColor', [.2 .2 .2], 'YColor', [.2 .2 .2]);
-end
-
-function annotate_heatmap(counts, pct, nr, nc, fnt, fsz)
-    for r = 1:nr
-        for c = 1:nc
-            if counts(r, c) > 0
-                txt_col = [.15 .15 .15];
-                if pct(r, c) > 55, txt_col = [1 1 1]; end
-                text(c, r, sprintf('%.0f%%', pct(r, c)), ...
-                    'HorizontalAlignment', 'center', 'FontSize', fsz-2, ...
-                    'FontName', fnt, 'Color', txt_col);
-            end
-        end
-    end
 end

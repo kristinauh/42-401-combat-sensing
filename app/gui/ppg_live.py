@@ -46,11 +46,11 @@ while True:
 
     title = 'PPG Bandpass Filtered'
 
-    if hr_est is not None:
-        title += f'\nHR: {hr_est:.1f} bpm'
+    # if hr_est is not None:
+    #     title += f'\nHR: {hr_est:.1f} bpm'
 
-    if spo2_est is not None:
-        title += f'\nSpO2: {spo2_est:.1f} %'
+    # if spo2_est is not None:
+    #     title += f'\nSpO2: {spo2_est:.1f} %'
 
     ax1.cla()
     ax1.plot(x, samples)
@@ -67,10 +67,10 @@ while True:
     ax2.set_title('FFT Spectrum')
     ax2.grid(True)
 
-    # Mark the estimated HR frequency
-    if hr_est is not None:
-        ax2.axvline(x=hr_est/60.0, color='r', linestyle='--', label=f'Est HR ({hr_est:.1f} bpm)')
-        ax2.legend()
+    # # mark the estimated HR frequency
+    # if hr_est is not None:
+    #     ax2.axvline(x=hr_est/60.0, color='r', linestyle='--', label=f'Est HR ({hr_est:.1f} bpm)')
+    #     ax2.legend()
 
     fig.tight_layout()
     fig.canvas.draw()

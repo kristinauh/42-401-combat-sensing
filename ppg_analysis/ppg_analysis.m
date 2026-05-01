@@ -11,7 +11,7 @@ Tref.timestamp = datetime(Tref.timestamp, 'InputFormat', 'yyyy-MM-dd''T''HH:mm:s
 win_ids = unique(Tppg.window);
 
 % Choose window to analyze
-window = 21;
+window = 13;
 
 % Initial SpO2 calibration constants
 SPO2_A = 110;
